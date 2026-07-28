@@ -16,27 +16,34 @@
 
     const STATION_NAME = "RADIO B.A.T";
     const EPOCH = new Date("2026-01-01T00:00:00Z").getTime();
+    const ANNOUNCE_INTERVAL_MS = 30 * 60 * 1000; // Intervention DJ toutes les 30 min
 
-    const TRACKS = [
-      {
-        title: "His Moment",
-        url: "https://raw.githubusercontent.com/Roxasnake/Radio/main/His%20moment.mp3",
-      },
-      {
-        title: "May You Remember x Memories x Together (Mashup)",
-        url: "https://raw.githubusercontent.com/Roxasnake/Radio/main/May%20You%20Remember%20x%20Memories%20x%20Together%20(Mashup)%20(Remastered)%20(Mashup).mp3",
-      },
-      {
-        title: "Nocturnal Inspiration",
-        url: "https://raw.githubusercontent.com/Roxasnake/Radio/main/Nocturnal%20Inspiration.mp3",
-      },
-    ];
-
-    // Intervalle entre interventions DJ (30 minutes par défaut)
-    // 💡 Astuce pour tester : change cette valeur par (10 * 1000) pour tester toutes les 10 secondes !
-    const ANNOUNCE_INTERVAL_MS = 30 * 60 * 1000;
+    // Fonction de mélange pseudo-aléatoire déterministe (mélange identique pour tous)
+    function seededShuffle(array, seed = 42) {
+      let m = array.length, t, i;
+      let s = seed;
+      const random = () => {
+        s |= 0; s = s + 0x6D2B79F5 | 0;
+        let imul = Math.imul(s ^ s >>> 15, 1 | s);
+        imul = imul + Math.imul(imul ^ imul >>> 7, 61 | imul) ^ imul;
+        return ((imul ^ imul >>> 14) >>> 0) / 4294967296;
+      };
+      const shuffled = [...array];
+      while (m) {
+        i = Math.floor(random() * m--);
+        t = shuffled[m];
+        shuffled[m] = shuffled[i];
+        shuffled[i] = t;
+      }
+      return shuffled;
+    }
 
     function announceUpcoming(titles, onDone) {
+      if (!titles || titles.length === 0) {
+        if (onDone) onDone();
+        return;
+      }
+
       const list = titles.join(", puis ");
       const prompt = encodeURIComponent(
         `Tu es un animateur radio nocturne, calme et posé. ` +
@@ -71,6 +78,7 @@
     }
 
     function Radio() {
+      const [tracks, setTracks] = useState([]);
       const [status, setStatus] = useState("idle");
       const [durations, setDurations] = useState(null);
       const [trackIndex, setTrackIndex] = useState(0);
@@ -78,32 +86,58 @@
       const audioRef = useRef(null);
 
       const trackIndexRef = useRef(0);
+      const tracksRef = useRef([]);
       const lastAnnouncementRef = useRef(Date.now());
 
-      useEffect(() => {
-        trackIndexRef.current = trackIndex;
-      }, [trackIndex]);
+      useEffect(() => { trackIndexRef.current = trackIndex; }, [trackIndex]);
+      useEffect(() => { tracksRef.current = tracks; }, [tracks]);
 
+      // Scan du dépôt GitHub + Mélange aléatoire synchrone
       useEffect(() => {
         let cancelled = false;
         setStatus("loading");
-        Promise.all(
-          TRACKS.map(
-            (t) =>
-              new Promise((resolve) => {
-                const a = new Audio();
-                a.preload = "metadata";
-                a.src = t.url;
-                a.addEventListener("loadedmetadata", () => resolve(a.duration || 0));
-                a.addEventListener("error", () => resolve(0));
-              })
-          )
-        ).then((durs) => {
-          if (!cancelled) {
-            setDurations(durs);
-            setStatus((s) => (s === "loading" ? "idle" : s));
-          }
-        });
+
+        fetch("https://api.github.com/repos/Roxasnake/Radio/contents/")
+          .then((res) => res.json())
+          .then((files) => {
+            if (!Array.isArray(files)) throw new Error("API GitHub indisponible");
+
+            const rawTracks = files
+              .filter((f) => f.type === "file" && f.name.toLowerCase().endsWith(".mp3") && !f.name.startsWith("dj_"))
+              .map((f) => ({
+                title: decodeURIComponent(f.name.replace(/\.mp3$/i, "")),
+                url: f.download_url,
+              }));
+
+            if (rawTracks.length === 0) throw new Error("Aucun MP3 trouvé");
+
+            // Mélange la liste dans un ordre aléatoire fixe pour tout le monde
+            const shuffled = seededShuffle(rawTracks);
+            setTracks(shuffled);
+
+            return Promise.all(
+              shuffled.map(
+                (t) =>
+                  new Promise((resolve) => {
+                    const a = new Audio();
+                    a.preload = "metadata";
+                    a.src = t.url;
+                    a.addEventListener("loadedmetadata", () => resolve(a.duration || 0));
+                    a.addEventListener("error", () => resolve(0));
+                  })
+              )
+            );
+          })
+          .then((durs) => {
+            if (!cancelled && durs) {
+              setDurations(durs);
+              setStatus((s) => (s === "loading" ? "idle" : s));
+            }
+          })
+          .catch(() => {
+            if (!cancelled) setStatus("error");
+          });
+
         return () => { cancelled = true; };
       }, []);
 
@@ -129,22 +163,20 @@
 
       const tuneIn = useCallback(() => {
         const pos = computePosition();
-        if (!pos || !audioRef.current) return;
+        if (!pos || !audioRef.current || tracks.length === 0) return;
 
         setTrackIndex(pos.idx);
         const audio = audioRef.current;
-        audio.src = TRACKS[pos.idx].url;
+        audio.src = tracks[pos.idx].url;
         audio.currentTime = pos.offset;
 
         audio
           .play()
           .then(() => setStatus("live"))
           .catch(() => setStatus("error"));
-      }, [computePosition]);
+      }, [computePosition, tracks]);
 
-      const handleEnded = () => {
-        tuneIn();
-      };
+      const handleEnded = () => { tuneIn(); };
 
       useEffect(() => {
         const handleVisibilityChange = () => {
@@ -156,7 +188,7 @@
         return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
       }, [status, tuneIn]);
 
-      // Timer de progression et détection du topo DJ
+      // Timer progression + Animateur Radio
       useEffect(() => {
         const t = setInterval(() => {
           const audio = audioRef.current;
@@ -169,14 +201,14 @@
             if (
               remaining > 0 &&
               remaining <= 12 &&
-              now - lastAnnouncementRef.current >= ANNOUNCE_INTERVAL_MS
+              now - lastAnnouncementRef.current >= ANNOUNCE_INTERVAL_MS &&
+              tracksRef.current.length > 0
             ) {
               lastAnnouncementRef.current = now;
               const upcoming = [1, 2].map(
-                (offset) => TRACKS[(trackIndexRef.current + offset) % TRACKS.length].title
+                (offset) => tracksRef.current[(trackIndexRef.current + offset) % tracksRef.current.length].title
               );
 
-              // Atténuation du volume de la musique
               audio.volume = 0.15;
               announceUpcoming(upcoming, () => {
                 if (audioRef.current) audioRef.current.volume = 1.0;
@@ -216,7 +248,7 @@
                 {status === "live"
                   ? "ON AIR"
                   : status === "loading"
-                  ? "ANALYSE DU SIGNAL…"
+                  ? "CHARGEMENT RADIO…"
                   : status === "error"
                   ? "ERREUR DE FLUX"
                   : "STANDBY"}
@@ -224,25 +256,18 @@
             </div>
 
             <h1 style={styles.station}>{STATION_NAME}</h1>
-            <div style={styles.freq}>98.7 FM · Direct Synchrone</div>
+            <div style={styles.freq}>98.7 FM · Mode Aléatoire Synchrone</div>
 
             <div style={styles.dial}>
               {Array.from({ length: 21 }).map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    ...styles.tick,
-                    height: i % 5 === 0 ? "10px" : "5px",
-                    opacity: i === 10 ? 1 : 0.35,
-                  }}
-                />
+                <div key={i} style={{ ...styles.tick, height: i % 5 === 0 ? "10px" : "5px", opacity: i === 10 ? 1 : 0.35 }} />
               ))}
               <div style={styles.needle} />
             </div>
 
             <div style={styles.display}>
               <div style={styles.trackLabel}>
-                {durations ? TRACKS[trackIndex].title : "Recherche des fréquences..."}
+                {tracks.length > 0 ? tracks[trackIndex]?.title : "Chargement de la playlist..."}
               </div>
               <div style={styles.timeRow}>
                 <span>{formatTime(elapsedInTrack)}</span>
@@ -269,17 +294,13 @@
 
             {status !== "live" && (
               <button style={styles.tuneButton} onClick={tuneIn} disabled={!durations}>
-                {durations ? "Se brancher sur l'antenne" : "Chargement de la grille…"}
+                {durations ? "Se brancher sur l'antenne" : "Chargement des fréquences…"}
               </button>
             )}
 
-            {status === "live" && (
-              <div style={styles.liveNote}>Flux en direct · Animateur en mode nocturne</div>
-            )}
+            {status === "live" && <div style={styles.liveNote}>Flux en direct · Morceaux mélangés</div>}
             {status === "error" && (
-              <div style={styles.liveNote}>
-                Lecture bloquée. Clique à nouveau pour débloquer l'audio.
-              </div>
+              <div style={styles.liveNote}>Erreur de chargement de la playlist.</div>
             )}
 
             <audio ref={audioRef} onEnded={handleEnded} />
