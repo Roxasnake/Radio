@@ -32,6 +32,37 @@
       },
     ];
 
+    // Intervalle entre interventions DJ (30 minutes par défaut)
+    // 💡 Astuce pour tester : change cette valeur par (10 * 1000) pour tester toutes les 10 secondes !
+    const ANNOUNCE_INTERVAL_MS = 30 * 60 * 1000;
+
+    function announceUpcoming(titles, onDone) {
+      const list = titles.join(", puis ");
+      const prompt = encodeURIComponent(
+        `Tu es un animateur radio nocturne, calme et posé. ` +
+        `En une ou deux phrases courtes, façon transition radio, annonce qu'on enchaîne avec : ${list}. ` +
+        `Pas de guillemets, pas de markdown, juste le texte parlé.`
+      );
+
+      fetch(`https://text.pollinations.ai/${prompt}`)
+        .then((r) => r.text())
+        .then((text) => {
+          if (!('speechSynthesis' in window)) {
+            if (onDone) onDone();
+            return;
+          }
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(text.trim());
+          utter.lang = "fr-FR";
+          utter.onend = () => { if (onDone) onDone(); };
+          utter.onerror = () => { if (onDone) onDone(); };
+          window.speechSynthesis.speak(utter);
+        })
+        .catch(() => {
+          if (onDone) onDone();
+        });
+    }
+
     function formatTime(s) {
       if (!isFinite(s) || s < 0) s = 0;
       const m = Math.floor(s / 60);
@@ -45,6 +76,13 @@
       const [trackIndex, setTrackIndex] = useState(0);
       const [elapsedInTrack, setElapsedInTrack] = useState(0);
       const audioRef = useRef(null);
+
+      const trackIndexRef = useRef(0);
+      const lastAnnouncementRef = useRef(Date.now());
+
+      useEffect(() => {
+        trackIndexRef.current = trackIndex;
+      }, [trackIndex]);
 
       useEffect(() => {
         let cancelled = false;
@@ -118,10 +156,32 @@
         return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
       }, [status, tuneIn]);
 
+      // Timer de progression et détection du topo DJ
       useEffect(() => {
         const t = setInterval(() => {
-          if (audioRef.current && !audioRef.current.paused) {
-            setElapsedInTrack(audioRef.current.currentTime || 0);
+          const audio = audioRef.current;
+          if (audio && !audio.paused) {
+            setElapsedInTrack(audio.currentTime || 0);
+
+            const remaining = (audio.duration || 0) - audio.currentTime;
+            const now = Date.now();
+
+            if (
+              remaining > 0 &&
+              remaining <= 12 &&
+              now - lastAnnouncementRef.current >= ANNOUNCE_INTERVAL_MS
+            ) {
+              lastAnnouncementRef.current = now;
+              const upcoming = [1, 2].map(
+                (offset) => TRACKS[(trackIndexRef.current + offset) % TRACKS.length].title
+              );
+
+              // Atténuation du volume de la musique
+              audio.volume = 0.15;
+              announceUpcoming(upcoming, () => {
+                if (audioRef.current) audioRef.current.volume = 1.0;
+              });
+            }
           }
         }, 400);
         return () => clearInterval(t);
@@ -136,14 +196,8 @@
         <div style={styles.wrap}>
           <style>{`
             @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap');
-            @keyframes eqbar {
-              0%, 100% { transform: scaleY(0.2); }
-              50% { transform: scaleY(1); }
-            }
-            @keyframes ledpulse {
-              0%, 100% { opacity: 1; }
-              50% { opacity: 0.4; }
-            }
+            @keyframes eqbar { 0%, 100% { transform: scaleY(0.2); } 50% { transform: scaleY(1); } }
+            @keyframes ledpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
             .rb-bar { animation: eqbar 0.8s ease-in-out infinite; transform-origin: bottom; }
             .rb-led-live { animation: ledpulse 1.8s ease-in-out infinite; }
           `}</style>
@@ -220,7 +274,7 @@
             )}
 
             {status === "live" && (
-              <div style={styles.liveNote}>Flux en direct — Contrôle du direct désactivé</div>
+              <div style={styles.liveNote}>Flux en direct · Animateur en mode nocturne</div>
             )}
             {status === "error" && (
               <div style={styles.liveNote}>
