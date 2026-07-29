@@ -16,12 +16,8 @@
 
     const STATION_NAME = "RADIO B.A.T";
     const EPOCH = new Date("2026-01-01T00:00:00Z").getTime();
-    
-    // Intervalle entre interventions du DJ (30 minutes par défaut)
-    // 💡 Astuce : change temporairement par (10 * 1000) pour tester toutes les 10 secondes !
     const ANNOUNCE_INTERVAL_MS = 30 * 60 * 1000;
 
-    // Mélange pseudo-aléatoire déterministe (mélange identique pour tous les auditeurs)
     function seededShuffle(array, seed = 42) {
       let m = array.length, t, i;
       let s = seed;
@@ -47,7 +43,6 @@
         return;
       }
 
-      // Nettoie les titres pour supprimer le surplus entre parenthèses
       const cleanTitles = titles.map(t => t.replace(/\(.*\)/g, '').trim());
       const list = cleanTitles.join(", puis ");
 
@@ -62,20 +57,17 @@
         window.speechSynthesis.cancel();
         const utter = new SpeechSynthesisUtterance(textToSpeak);
         utter.lang = "fr-FR";
-        utter.rate = 0.93; // Débit de voix posé style radio
+        utter.rate = 0.93;
         utter.onend = () => { if (onDone) onDone(); };
         utter.onerror = () => { if (onDone) onDone(); };
         window.speechSynthesis.speak(utter);
       };
 
-      // Requête POST vers l'IA pour gérer proprement tous les noms de fichiers
       fetch("https://text.pollinations.ai/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [
-            { role: "user", content: promptText }
-          ],
+          messages: [{ role: "user", content: promptText }],
           seed: Math.floor(Math.random() * 1000)
         })
       })
@@ -91,7 +83,6 @@
           }
         })
         .catch(() => {
-          // En cas d'erreur API, le DJ prend le texte de secours
           speak(fallbackText);
         });
     }
@@ -118,7 +109,6 @@
       useEffect(() => { trackIndexRef.current = trackIndex; }, [trackIndex]);
       useEffect(() => { tracksRef.current = tracks; }, [tracks]);
 
-      // Scan dynamique du dépôt GitHub + Mélange
       useEffect(() => {
         let cancelled = false;
         setStatus("loading");
@@ -213,7 +203,6 @@
         return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
       }, [status, tuneIn]);
 
-      // Timer de progression et déclenchement DJ
       useEffect(() => {
         const t = setInterval(() => {
           const audio = audioRef.current;
@@ -234,7 +223,6 @@
                 (offset) => tracksRef.current[(trackIndexRef.current + offset) % tracksRef.current.length].title
               );
 
-              // Ducking : baisse le volume de la musique pendant le parler du DJ
               audio.volume = 0.15;
               announceUpcoming(upcoming, () => {
                 if (audioRef.current) audioRef.current.volume = 1.0;
@@ -354,7 +342,7 @@
       bars: { display: "flex", alignItems: "flex-end", gap: "4px", height: "36px", marginBottom: "20px", justifyContent: "center" },
       bar: { width: "5px", height: "100%", borderRadius: "2px", background: "linear-gradient(180deg, #ffbb33, #ff5a3c)" },
       tuneButton: { width: "100%", padding: "13px", borderRadius: "10px", border: "none", background: "linear-gradient(160deg, #f2b544, #d9862a)", color: "#241608", fontFamily: "'Space Mono', monospace", fontWeight: "bold", fontSize: "13px", letterSpacing: "0.5px", cursor: "pointer" },
-      liveNote: { textAlign: "center", fontSize: "10.5px", color="#8a6d47", letterSpacing: "0.5px" }
+      liveNote: { textAlign: "center", fontSize: "10.5px", color: "#8a6d47", letterSpacing: "0.5px" }
     };
 
     const root = ReactDOM.createRoot(document.getElementById("root"));
