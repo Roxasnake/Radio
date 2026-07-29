@@ -109,6 +109,7 @@
       useEffect(() => { trackIndexRef.current = trackIndex; }, [trackIndex]);
       useEffect(() => { tracksRef.current = tracks; }, [tracks]);
 
+      // Scan dynamique du dépôt GitHub + Mélange
       useEffect(() => {
         let cancelled = false;
         setStatus("loading");
@@ -192,6 +193,24 @@
       }, [computePosition, tracks]);
 
       const handleEnded = () => { tuneIn(); };
+
+      // Intégration MediaSession pour l'écran de verrouillage
+      useEffect(() => {
+        if ('mediaSession' in navigator && tracks.length > 0 && tracks[trackIndex]) {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: tracks[trackIndex].title,
+            artist: STATION_NAME,
+            album: "Direct Synchrone"
+          });
+
+          navigator.mediaSession.setActionHandler('play', () => {
+            audioRef.current?.play();
+          });
+          navigator.mediaSession.setActionHandler('pause', () => {
+            audioRef.current?.pause();
+          });
+        }
+      }, [trackIndex, tracks]);
 
       useEffect(() => {
         const handleVisibilityChange = () => {
@@ -312,9 +331,9 @@
               </button>
             )}
 
-            {status === "live" && <div style={styles.liveNote}>Flux en direct · Animateur nocturne actif</div>}
+            {status === "live" && <div style={styles.liveNote}>Flux en direct · Arrière-plan activé</div>}
             {status === "error" && (
-              <div style={styles.liveNote}>Erreur au chargement des MP3. Vérifie le dépôt.</div>
+              <div style={styles.liveNote}>Erreur au chargement des MP3.</div>
             )}
 
             <audio ref={audioRef} onEnded={handleEnded} />
