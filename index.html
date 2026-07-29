@@ -7,7 +7,7 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Lecture des pochettes ID3 -->
+  <!-- Lecture des tags ID3 (APIC) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
 </head>
 <body style="margin:0; background:#050302; overflow-x:hidden;">
@@ -128,34 +128,39 @@
       useEffect(() => { trackIndexRef.current = trackIndex; }, [trackIndex]);
       useEffect(() => { tracksRef.current = tracks; }, [tracks]);
 
-      // Extraction robuste des pochette via Blob (résout les blocages CORS GitHub)
+      // Extraction binaire haute performance de la pochette ID3 APIC
       useEffect(() => {
+        let createdUrl = null;
+
         if (tracks.length > 0 && tracks[trackIndex]) {
-          const currentUrl = tracks[trackIndex].url;
-          
-          fetch(currentUrl)
+          fetch(tracks[trackIndex].url)
             .then(res => res.blob())
             .then(blob => {
               if (window.jsmediatags) {
                 window.jsmediatags.read(blob, {
                   onSuccess: function(tag) {
-                    const image = tag.tags.picture;
-                    if (image) {
-                      let base64String = "";
-                      for (let i = 0; i < image.data.length; i++) {
-                        base64String += String.fromCharCode(image.data[i]);
-                      }
-                      setCoverUrl(`data:${image.format};base64,${window.btoa(base64String)}`);
+                    const picture = tag.tags.picture;
+                    if (picture) {
+                      const byteArray = new Uint8Array(picture.data);
+                      const imgBlob = new Blob([byteArray], { type: picture.format });
+                      createdUrl = URL.createObjectURL(imgBlob);
+                      setCoverUrl(createdUrl);
                     } else {
                       setCoverUrl(null);
                     }
                   },
-                  onError: function() { setCoverUrl(null); }
+                  onError: function() {
+                    setCoverUrl(null);
+                  }
                 });
               }
             })
             .catch(() => setCoverUrl(null));
         }
+
+        return () => {
+          if (createdUrl) URL.revokeObjectURL(createdUrl);
+        };
       }, [trackIndex, tracks]);
 
       // Scan des fichiers MP3 GitHub
@@ -260,7 +265,7 @@
 
       const handleEnded = () => { tuneIn(); };
 
-      // API MediaSession (écran de verrouillage mobile)
+      // API MediaSession (verrouillage mobile)
       useEffect(() => {
         if ('mediaSession' in navigator && tracks.length > 0 && tracks[trackIndex]) {
           navigator.mediaSession.metadata = new MediaMetadata({
@@ -323,7 +328,6 @@
 
       return (
         <div style={styles.wrap}>
-          {/* Halos lumineux dynamiques basés sur la pochette en cours */}
           {coverUrl && (
             <div style={{
               position: "fixed",
@@ -373,7 +377,6 @@
             <h1 style={styles.station}>{STATION_NAME}</h1>
             <div style={styles.subtext}>Direct Synchrone</div>
 
-            {/* Pochette d'album au format carré (1:1) */}
             <div style={styles.coverBox}>
               {coverUrl ? (
                 <img src={coverUrl} alt="Pochette d'album" style={styles.coverImg} />
