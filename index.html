@@ -7,8 +7,8 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Parser ID3v2/APIC professionnel (supporte UTF-16, ID3v2.2/v2.3/v2.4) -->
-  <script src="https://cdn.jsdelivr.net/npm/music-metadata-browser@2.5.10/dist/music-metadata-browser.js"></script>
+  <!-- CDN jsmediatags stable et léger (lecture partielle via HTTP Range) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
 </head>
 <body style="margin:0; background:#050302; overflow-x:hidden;">
   <div id="root"></div>
@@ -20,27 +20,41 @@
     const EPOCH = new Date("2026-01-01T00:00:00Z").getTime();
     const ANNOUNCE_INTERVAL_MS = 30 * 60 * 1000;
 
-    // Extraction robuste de la pochette binaire
-    async function extractCoverFromAudio(url) {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) return null;
-        const blob = await response.blob();
-        
-        const mm = window.musicMetadata || window.mm;
-        if (!mm) return null;
-
-        const metadata = await mm.parseBlob(blob);
-        const picture = metadata.common && metadata.common.picture && metadata.common.picture[0];
-
-        if (picture && picture.data) {
-          const imgBlob = new Blob([picture.data], { type: picture.format || 'image/jpeg' });
-          return URL.createObjectURL(imgBlob);
+    // Extraction sécurisée de la pochette (fail-safe)
+    function extractCoverFromAudio(url) {
+      return new Promise((resolve) => {
+        if (!window.jsmediatags) {
+          resolve(null);
+          return;
         }
-      } catch (e) {
-        console.warn("Erreur d'extraction de pochette :", e);
-      }
-      return null;
+
+        window.jsmediatags.read(url, {
+          onSuccess: function(tag) {
+            try {
+              const picture = tag.tags && tag.tags.picture;
+              if (picture && picture.data && picture.data.length > 0) {
+                let base64String = "";
+                const bytes = new Uint8Array(picture.data);
+                const len = bytes.length;
+                for (let i = 0; i < len; i++) {
+                  base64String += String.fromCharCode(bytes[i]);
+                }
+                const format = picture.format || "image/jpeg";
+                resolve(`data:${format};base64,${window.btoa(base64String)}`);
+              } else {
+                resolve(null);
+              }
+            } catch (e) {
+              console.warn("Erreur de conversion de l'image ID3:", e);
+              resolve(null);
+            }
+          },
+          onError: function(error) {
+            console.warn("Lecture des métadonnées ignorée pour ce morceau:", error);
+            resolve(null);
+          }
+        });
+      });
     }
 
     function seededShuffle(array, seed = 42) {
@@ -90,7 +104,7 @@
       let contextPrompt = `Tu es un animateur radio nocturne, calme et posé. `;
       if (timeNote) contextPrompt += `Fais une très courte mention de ceci : "${timeNote}". `;
       if (isNewTrack) contextPrompt += `Annonce avec enthousiasme une nouveauté ou un artiste invité à l'antenne : ${titles[0]}. `;
-      else contextPrompt += `En une phrase courte (15 mots max), annonce : ${list}. `;
+      else contextPrompt += `En une sentence courte (15 mots max), annonce : ${list}. `;
 
       const speak = (textToSpeak) => {
         if (!('speechSynthesis' in window)) {
@@ -151,29 +165,26 @@
       useEffect(() => { trackIndexRef.current = trackIndex; }, [trackIndex]);
       useEffect(() => { tracksRef.current = tracks; }, [tracks]);
 
-      // Extraction automatique de la pochette
+      // Extraction sécurisée de la pochette
       useEffect(() => {
         let active = true;
-        let createdBlobUrl = null;
 
         if (tracks.length > 0 && tracks[trackIndex]) {
-          extractCoverFromAudio(tracks[trackIndex].url).then(imgUrl => {
-            if (active) {
-              createdBlobUrl = imgUrl;
-              setCoverUrl(imgUrl);
-            }
-          });
+          extractCoverFromAudio(tracks[trackIndex].url)
+            .then(imgUrl => {
+              if (active) setCoverUrl(imgUrl);
+            })
+            .catch(() => {
+              if (active) setCoverUrl(null);
+            });
         } else {
           setCoverUrl(null);
         }
 
-        return () => {
-          active = false;
-          if (createdBlobUrl) URL.revokeObjectURL(createdBlobUrl);
-        };
+        return () => { active = false; };
       }, [trackIndex, tracks]);
 
-      // Scan des fichiers MP3 GitHub
+      // Chargement initial du flux
       useEffect(() => {
         let cancelled = false;
         setStatus("loading");
@@ -275,14 +286,14 @@
 
       const handleEnded = () => { tuneIn(); };
 
-      // API MediaSession
+      // Intégration MediaSession (Commandes écran de verrouillage/Mobile)
       useEffect(() => {
         if ('mediaSession' in navigator && tracks.length > 0 && tracks[trackIndex]) {
           navigator.mediaSession.metadata = new MediaMetadata({
             title: tracks[trackIndex].title,
             artist: STATION_NAME,
             album: "Direct Synchrone",
-            artwork: coverUrl ? [{ src: coverUrl, sizes: '512x512', type: 'image/png' }] : []
+            artwork: coverUrl ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }] : []
           });
 
           navigator.mediaSession.setActionHandler('play', () => audioRef.current?.play());
