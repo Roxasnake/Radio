@@ -22,73 +22,15 @@
 
     const DEFAULT_COVER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600' viewBox='0 0 600 600'><rect width='100%' height='100%' fill='%23121824'/><circle cx='300' cy='300' r='200' fill='none' stroke='%2355d6be' stroke-width='4' opacity='0.25'/><circle cx='300' cy='300' r='140' fill='none' stroke='%2355d6be' stroke-width='2' opacity='0.15'/><text x='50%' y='46%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='42' font-weight='800' letter-spacing='4'>RADIO B.A.T</text><text x='50%' y='56%' dominant-baseline='middle' text-anchor='middle' fill='%2355d6be' font-family='sans-serif' font-size='18' font-weight='700' letter-spacing='6'>DIRECT SYNCHRONE</text></svg>";
 
-    // Extraction dynamique par streaming de l'en-tête ID3
+    // Lecture 100 % directe du fichier MP3 complet via jsmediatags
     async function extractCoverFromMP3(url) {
       if (!window.jsmediatags) return null;
 
       try {
         const response = await fetch(url);
-        if (!response.ok || !response.body) return null;
+        if (!response.ok) return null;
 
-        const reader = response.body.getReader();
-        const chunks = [];
-        let totalBytes = 0;
-        let requiredBytes = 10;
-        let tagSizeCalculated = false;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          chunks.push(value);
-          totalBytes += value.length;
-
-          // Lecture des 10 premiers octets d'en-tête ID3v2
-          if (!tagSizeCalculated && totalBytes >= 10) {
-            const firstBytes = new Uint8Array(10);
-            let offset = 0;
-            for (const chunk of chunks) {
-              const count = Math.min(chunk.length, 10 - offset);
-              firstBytes.set(chunk.subarray(0, count), offset);
-              offset += count;
-              if (offset >= 10) break;
-            }
-
-            // Signature ID3 ('I', 'D', '3')
-            if (firstBytes[0] === 0x49 && firstBytes[1] === 0x44 && firstBytes[2] === 0x33) {
-              // Calcul Synchsafe Integer de la taille du tag
-              const tagSize = ((firstBytes[6] & 0x7f) << 21) |
-                              ((firstBytes[7] & 0x7f) << 14) |
-                              ((firstBytes[8] & 0x7f) << 7) |
-                               (firstBytes[9] & 0x7f);
-
-              requiredBytes = tagSize + 10;
-              tagSizeCalculated = true;
-            } else {
-              // Pas de tag ID3v2 valide au début
-              reader.cancel();
-              return null;
-            }
-          }
-
-          // Stop dès qu'on a récupéré l'intégralité du tag ID3
-          if (tagSizeCalculated && totalBytes >= requiredBytes) {
-            reader.cancel();
-            break;
-          }
-        }
-
-        // Assemblage des octets de métadonnées uniquement
-        const id3Buffer = new Uint8Array(Math.min(totalBytes, requiredBytes));
-        let pos = 0;
-        for (const chunk of chunks) {
-          if (pos >= id3Buffer.length) break;
-          const writeLen = Math.min(chunk.length, id3Buffer.length - pos);
-          id3Buffer.set(chunk.subarray(0, writeLen), pos);
-          pos += writeLen;
-        }
-
-        const blob = new Blob([id3Buffer]);
+        const blob = await response.blob();
 
         return new Promise((resolve) => {
           window.jsmediatags.read(blob, {
