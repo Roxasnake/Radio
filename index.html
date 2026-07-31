@@ -7,7 +7,6 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body style="margin:0; background:#0b0d12; color:#ffffff; font-family:'Plus Jakarta Sans', sans-serif; overflow-x:hidden;">
@@ -20,47 +19,94 @@
     const STATION_NAME = "RADIO B.A.T";
     const EPOCH = new Date("2026-01-01T00:00:00Z").getTime();
 
-    // Pochette par défaut
     const DEFAULT_COVER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600' viewBox='0 0 600 600'><rect width='100%' height='100%' fill='%23121824'/><circle cx='300' cy='300' r='200' fill='none' stroke='%2355d6be' stroke-width='4' opacity='0.25'/><circle cx='300' cy='300' r='140' fill='none' stroke='%2355d6be' stroke-width='2' opacity='0.15'/><text x='50%' y='46%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='42' font-weight='800' letter-spacing='4'>RADIO B.A.T</text><text x='50%' y='56%' dominant-baseline='middle' text-anchor='middle' fill='%2355d6be' font-family='sans-serif' font-size='18' font-weight='700' letter-spacing='6'>DIRECT SYNCHRONE</text></svg>";
 
-    // Extraction directe et propre des pochettes ID3 depuis le MP3
+    // Parseur ID3 binaire natif ultra-fiable
     async function extractCoverFromMP3(url) {
-      if (!window.jsmediatags) return null;
-
       try {
         const response = await fetch(url);
         if (!response.ok) return null;
 
-        const blob = await response.blob();
+        const buffer = await response.arrayBuffer();
+        const view = new DataView(buffer);
 
-        return new Promise((resolve) => {
-          window.jsmediatags.read(blob, {
-            onSuccess: function(tag) {
-              try {
-                const picture = tag.tags && tag.tags.picture;
-                if (picture && picture.data && picture.data.length > 0) {
-                  const byteArray = new Uint8Array(picture.data);
-                  let mimeType = picture.format || "image/jpeg";
-                  if (!mimeType.includes("/")) {
-                    mimeType = "image/" + mimeType;
-                  }
-                  const imageBlob = new Blob([byteArray], { type: mimeType });
-                  resolve(URL.createObjectURL(imageBlob));
-                } else {
-                  resolve(null);
-                }
-              } catch (e) {
-                resolve(null);
-              }
-            },
-            onError: function() {
-              resolve(null);
+        if (buffer.byteLength < 10) return null;
+
+        // Entête "ID3"
+        if (view.getUint8(0) !== 0x49 || view.getUint8(1) !== 0x44 || view.getUint8(2) !== 0x33) {
+          return null;
+        }
+
+        const version = view.getUint8(3);
+        const tagSize = ((view.getUint8(6) & 0x7f) << 21) |
+                        ((view.getUint8(7) & 0x7f) << 14) |
+                        ((view.getUint8(8) & 0x7f) << 7) |
+                         (view.getUint8(9) & 0x7f);
+
+        let offset = 10;
+        const end = Math.min(buffer.byteLength, 10 + tagSize);
+
+        while (offset < end - 10) {
+          let frameId = "";
+          let frameSize = 0;
+
+          if (version === 2) {
+            frameId = String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2));
+            frameSize = (view.getUint8(offset + 3) << 16) | (view.getUint8(offset + 4) << 8) | view.getUint8(offset + 5);
+            offset += 6;
+          } else {
+            frameId = String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
+            if (version === 4) {
+              frameSize = ((view.getUint8(offset + 4) & 0x7f) << 21) |
+                          ((view.getUint8(offset + 5) & 0x7f) << 14) |
+                          ((view.getUint8(offset + 6) & 0x7f) << 7) |
+                           (view.getUint8(offset + 7) & 0x7f);
+            } else {
+              frameSize = view.getUint32(offset + 4);
             }
-          });
-        });
+            offset += 10;
+          }
+
+          if (!frameId || frameId.charCodeAt(0) === 0 || frameSize <= 0 || offset + frameSize > buffer.byteLength) {
+            break;
+          }
+
+          if (frameId === "APIC" || frameId === "PIC") {
+            const frameStart = offset;
+            const frameEnd = frameStart + frameSize;
+
+            let imgStart = -1;
+            let mimeType = "image/jpeg";
+
+            // Balayage des octets magiques d'image dans le cadre APIC
+            for (let i = frameStart; i < frameEnd - 4; i++) {
+              // Signature JPEG : FF D8 FF
+              if (view.getUint8(i) === 0xFF && view.getUint8(i + 1) === 0xD8 && view.getUint8(i + 2) === 0xFF) {
+                imgStart = i;
+                mimeType = "image/jpeg";
+                break;
+              }
+              // Signature PNG : 89 50 4E 47
+              if (view.getUint8(i) === 0x89 && view.getUint8(i + 1) === 0x50 && view.getUint8(i + 2) === 0x4E && view.getUint8(i + 3) === 0x47) {
+                imgStart = i;
+                mimeType = "image/png";
+                break;
+              }
+            }
+
+            if (imgStart !== -1) {
+              const imgData = new Uint8Array(buffer, imgStart, frameEnd - imgStart);
+              const blob = new Blob([imgData], { type: mimeType });
+              return URL.createObjectURL(blob);
+            }
+          }
+
+          offset += frameSize;
+        }
       } catch (e) {
-        return null;
+        console.error("Erreur de lecture ID3 :", e);
       }
+      return null;
     }
 
     function seededShuffle(array, seed = 42) {
@@ -190,7 +236,6 @@
           .catch(() => setStatus("error"));
       }, [computePosition, tracks]);
 
-      // Extraction de la pochette directement depuis le fichier MP3
       useEffect(() => {
         let active = true;
         if (tracks.length > 0 && tracks[trackIndex]) {
@@ -227,7 +272,6 @@
         tuneIn();
       };
 
-      // Synchronisation MediaSession (Écran de verrouillage / Bluetooth)
       useEffect(() => {
         if ('mediaSession' in navigator && tracks.length > 0 && tracks[trackIndex]) {
           const currentTrack = tracks[trackIndex];
@@ -247,9 +291,6 @@
             audioRef.current?.pause();
             setIsPlaying(false);
           });
-
-          navigator.mediaSession.setActionHandler('previoustrack', null);
-          navigator.mediaSession.setActionHandler('nexttrack', null);
         }
       }, [trackIndex, tracks, currentCover]);
 
