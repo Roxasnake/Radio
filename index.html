@@ -23,13 +23,19 @@
     // Pochette par défaut aux couleurs de la station
     const DEFAULT_COVER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600' viewBox='0 0 600 600'><rect width='100%' height='100%' fill='%23121824'/><circle cx='300' cy='300' r='200' fill='none' stroke='%2355d6be' stroke-width='4' opacity='0.25'/><circle cx='300' cy='300' r='140' fill='none' stroke='%2355d6be' stroke-width='2' opacity='0.15'/><text x='50%' y='46%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='42' font-weight='800' letter-spacing='4'>RADIO B.A.T</text><text x='50%' y='56%' dominant-baseline='middle' text-anchor='middle' fill='%2355d6be' font-family='sans-serif' font-size='18' font-weight='700' letter-spacing='6'>DIRECT SYNCHRONE</text></svg>";
 
-    // Extraction robuste des pochette ID3 via Blob
+    // Extraction robuste des pochettes ID3 (support jusqu'à 4 Mo pour les images HD)
     async function extractCoverFromMP3(url) {
       if (!window.jsmediatags) return null;
 
       try {
-        // Téléchargement des 512 premiers Ko pour contourner le blocage CORS Range
-        const response = await fetch(url, { headers: { 'Range': 'bytes=0-524288' } });
+        // Lecture partielle jusqu'à 4 Mo pour inclure les grandes images intégrées
+        let response = await fetch(url, { headers: { 'Range': 'bytes=0-4194303' } });
+
+        // Fallback si GitHub n'accepte pas la requête partielle
+        if (!response.ok && response.status !== 206) {
+          response = await fetch(url);
+        }
+
         const blob = await response.blob();
 
         return new Promise((resolve) => {
@@ -59,7 +65,7 @@
       }
     }
 
-    // Vérifie si une image avec le même nom existe sur le dépôt (ex: titre.jpg ou titre.png)
+    // Vérifie si une image du même nom existe sur le dépôt (.jpg ou .png)
     async function checkMatchingImage(mp3Url) {
       const jpgUrl = mp3Url.replace(/\.mp3$/i, ".jpg");
       const pngUrl = mp3Url.replace(/\.mp3$/i, ".png");
@@ -202,7 +208,7 @@
           .catch(() => setStatus("error"));
       }, [computePosition, tracks]);
 
-      // Recherche prioritaire : 1) Image du même nom dans le repo, 2) Tag ID3 MP3, 3) SVG Radio B.A.T
+      // Recherche de pochette : 1) Image dédiée sur GitHub, 2) Tag ID3 MP3 (jusqu'à 4 Mo), 3) Pochette par défaut
       useEffect(() => {
         let active = true;
         if (tracks.length > 0 && tracks[trackIndex]) {
@@ -245,7 +251,7 @@
         tuneIn();
       };
 
-      // Configuration de l'écran de verrouillage Android / iOS
+      // Synchronisation avec l'écran de verrouillage
       useEffect(() => {
         if ('mediaSession' in navigator && tracks.length > 0 && tracks[trackIndex]) {
           const currentTrack = tracks[trackIndex];
@@ -266,7 +272,6 @@
             setIsPlaying(false);
           });
 
-          // Verrouillage : pas de boutons piste suivante / précédente
           navigator.mediaSession.setActionHandler('previoustrack', null);
           navigator.mediaSession.setActionHandler('nexttrack', null);
         }
