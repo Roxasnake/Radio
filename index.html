@@ -3,25 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RADIO B.A.T</title>
+  <title>RADIO B.A.T — Suno Player</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- CDN jsmediatags stable et léger (lecture partielle via HTTP Range) -->
+  <!-- Parser ID3 léger pour lire l'image interne des MP3 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
 </head>
-<body style="margin:0; background:#050302; overflow-x:hidden;">
+<body style="margin:0; background:#0b0d12; color:#ffffff; font-family:'Plus Jakarta Sans', sans-serif; overflow-x:hidden;">
   <div id="root"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
+    const ARTIST_NAME = "DJ B.A.T";
     const STATION_NAME = "RADIO B.A.T";
+    const DEFAULT_COVER = "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=1000&auto=format&fit=crop";
     const EPOCH = new Date("2026-01-01T00:00:00Z").getTime();
-    const ANNOUNCE_INTERVAL_MS = 30 * 60 * 1000;
 
-    // Extraction sécurisée de la pochette (fail-safe)
-    function extractCoverFromAudio(url) {
+    // Extraction de la pochette ID3 du MP3 vers une URL Blob compatible Android
+    function extractCoverFromMP3(url) {
       return new Promise((resolve) => {
         if (!window.jsmediatags) {
           resolve(null);
@@ -33,24 +35,19 @@
             try {
               const picture = tag.tags && tag.tags.picture;
               if (picture && picture.data && picture.data.length > 0) {
-                let base64String = "";
-                const bytes = new Uint8Array(picture.data);
-                const len = bytes.length;
-                for (let i = 0; i < len; i++) {
-                  base64String += String.fromCharCode(bytes[i]);
-                }
-                const format = picture.format || "image/jpeg";
-                resolve(`data:${format};base64,${window.btoa(base64String)}`);
+                const byteArray = new Uint8Array(picture.data);
+                const mimeType = picture.format || "image/jpeg";
+                const blob = new Blob([byteArray], { type: mimeType });
+                const blobUrl = URL.createObjectURL(blob);
+                resolve(blobUrl);
               } else {
                 resolve(null);
               }
             } catch (e) {
-              console.warn("Erreur de conversion de l'image ID3:", e);
               resolve(null);
             }
           },
-          onError: function(error) {
-            console.warn("Lecture des métadonnées ignorée pour ce morceau:", error);
+          onError: function() {
             resolve(null);
           }
         });
@@ -76,77 +73,11 @@
       return shuffled;
     }
 
-    function getTimeContext() {
-      const now = new Date();
-      const h = now.getHours();
-      const m = now.getMinutes();
-
-      if (h === 9 && m >= 20 && m <= 40) return "C'est l'heure de la pause café !";
-      if (h === 12 && m <= 20) return "C'est l'heure du repas, bon appétit à tous.";
-      if (h === 16 && m <= 30) return "C'est bientôt la fin de journée, courage !";
-      if (m >= 55 || m <= 5) return `Il est ${h} heures tapantes sur Radio B.A.T.`;
-      if (h >= 22 || h < 6) return "Ambiance nocturne pour les couche-tard.";
-      return "";
-    }
-
-    function announceUpcoming(titles, isNewTrack, onDone) {
-      if (!titles || titles.length === 0) {
-        if (onDone) onDone();
-        return;
-      }
-
-      const cleanTitles = titles.map(t => t.replace(/\(.*\)/g, '').trim());
-      const list = cleanTitles.join(", puis ");
-      const timeNote = getTimeContext();
-
-      const fallbackText = `Vous écoutez Radio B.A.T. ${timeNote} À suivre : ${list}.`;
-      
-      let contextPrompt = `Tu es un animateur radio nocturne, calme et posé. `;
-      if (timeNote) contextPrompt += `Fais une très courte mention de ceci : "${timeNote}". `;
-      if (isNewTrack) contextPrompt += `Annonce avec enthousiasme une nouveauté ou un artiste invité à l'antenne : ${titles[0]}. `;
-      else contextPrompt += `En une sentence courte (15 mots max), annonce : ${list}. `;
-
-      const speak = (textToSpeak) => {
-        if (!('speechSynthesis' in window)) {
-          if (onDone) onDone();
-          return;
-        }
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(textToSpeak);
-        utter.lang = "fr-FR";
-        utter.rate = 0.93;
-        utter.onend = () => { if (onDone) onDone(); };
-        utter.onerror = () => { if (onDone) onDone(); };
-        window.speechSynthesis.speak(utter);
-      };
-
-      fetch("https://text.pollinations.ai/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: contextPrompt }],
-          seed: Math.floor(Math.random() * 1000)
-        })
-      })
-        .then((r) => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.text();
-        })
-        .then((text) => {
-          if (!text || text.includes("<!DOCTYPE") || text.length > 250) {
-            speak(fallbackText);
-          } else {
-            speak(text.trim());
-          }
-        })
-        .catch(() => speak(fallbackText));
-    }
-
     function formatTime(s) {
-      if (!isFinite(s) || s < 0) s = 0;
+      if (!isFinite(s) || s < 0) return "00:00";
       const m = Math.floor(s / 60);
       const sec = Math.floor(s % 60);
-      return `${m}:${sec.toString().padStart(2, "0")}`;
+      return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
     }
 
     function Radio() {
@@ -154,37 +85,12 @@
       const [status, setStatus] = useState("idle");
       const [durations, setDurations] = useState(null);
       const [trackIndex, setTrackIndex] = useState(0);
-      const [elapsedInTrack, setElapsedInTrack] = useState(0);
-      const [coverUrl, setCoverUrl] = useState(null);
+      const [elapsed, setElapsed] = useState(0);
+      const [isPlaying, setIsPlaying] = useState(false);
+      const [currentCover, setCurrentCover] = useState(DEFAULT_COVER);
       const audioRef = useRef(null);
 
-      const trackIndexRef = useRef(0);
-      const tracksRef = useRef([]);
-      const lastAnnouncementRef = useRef(Date.now());
-
-      useEffect(() => { trackIndexRef.current = trackIndex; }, [trackIndex]);
-      useEffect(() => { tracksRef.current = tracks; }, [tracks]);
-
-      // Extraction sécurisée de la pochette
-      useEffect(() => {
-        let active = true;
-
-        if (tracks.length > 0 && tracks[trackIndex]) {
-          extractCoverFromAudio(tracks[trackIndex].url)
-            .then(imgUrl => {
-              if (active) setCoverUrl(imgUrl);
-            })
-            .catch(() => {
-              if (active) setCoverUrl(null);
-            });
-        } else {
-          setCoverUrl(null);
-        }
-
-        return () => { active = false; };
-      }, [trackIndex, tracks]);
-
-      // Chargement initial du flux
+      // Chargement des MP3
       useEffect(() => {
         let cancelled = false;
         setStatus("loading");
@@ -194,33 +100,22 @@
           fetch("https://api.github.com/repos/Roxasnake/Radio/contents/nouveautes").then(r => r.json()).catch(() => [])
         ])
           .then(([rootFiles, newFiles]) => {
-            let allTracks = [];
+            let allMP3s = [];
 
-            if (Array.isArray(rootFiles)) {
-              const rootMP3s = rootFiles
+            const parseFiles = (files) => {
+              if (!Array.isArray(files)) return [];
+              return files
                 .filter(f => f.type === "file" && f.name.toLowerCase().endsWith(".mp3"))
                 .map(f => ({
                   title: decodeURIComponent(f.name.replace(/\.mp3$/i, "")),
-                  url: f.download_url,
-                  isNew: false
+                  url: f.download_url
                 }));
-              allTracks.push(...rootMP3s);
-            }
+            };
 
-            if (Array.isArray(newFiles)) {
-              const newMP3s = newFiles
-                .filter(f => f.type === "file" && f.name.toLowerCase().endsWith(".mp3"))
-                .map(f => ({
-                  title: `[NOUVEAUTÉ] ${decodeURIComponent(f.name.replace(/\.mp3$/i, ""))}`,
-                  url: f.download_url,
-                  isNew: true
-                }));
-              allTracks.push(...newMP3s);
-            }
+            allMP3s = [...parseFiles(rootFiles), ...parseFiles(newFiles)];
+            if (allMP3s.length === 0) throw new Error("Aucun morceau MP3 trouvé");
 
-            if (allTracks.length === 0) throw new Error("Aucun MP3 trouvé");
-
-            const shuffled = seededShuffle(allTracks);
+            const shuffled = seededShuffle(allMP3s);
             setTracks(shuffled);
 
             return Promise.all(
@@ -239,7 +134,7 @@
           .then((durs) => {
             if (!cancelled && durs) {
               setDurations(durs);
-              setStatus((s) => (s === "loading" ? "idle" : s));
+              setStatus("idle");
             }
           })
           .catch(() => {
@@ -249,24 +144,37 @@
         return () => { cancelled = true; };
       }, []);
 
+      // Extraction automatique de la pochette du MP3 actif
+      useEffect(() => {
+        let active = true;
+        if (tracks.length > 0 && tracks[trackIndex]) {
+          extractCoverFromMP3(tracks[trackIndex].url).then((blobUrl) => {
+            if (active) {
+              setCurrentCover(blobUrl || DEFAULT_COVER);
+            }
+          });
+        }
+        return () => { active = false; };
+      }, [trackIndex, tracks]);
+
       const computePosition = useCallback(() => {
         if (!durations || durations.length === 0) return null;
         const total = durations.reduce((a, b) => a + b, 0);
         if (total <= 0) return null;
 
         const now = Date.now();
-        let elapsed = ((now - EPOCH) / 1000) % total;
-        if (elapsed < 0) elapsed += total;
+        let currentElapsed = ((now - EPOCH) / 1000) % total;
+        if (currentElapsed < 0) currentElapsed += total;
 
         let idx = 0;
         for (let i = 0; i < durations.length; i++) {
-          if (elapsed < durations[i]) {
+          if (currentElapsed < durations[i]) {
             idx = i;
             break;
           }
-          elapsed -= durations[i];
+          currentElapsed -= durations[i];
         }
-        return { idx, offset: elapsed };
+        return { idx, offset: currentElapsed };
       }, [durations]);
 
       const tuneIn = useCallback(() => {
@@ -280,199 +188,333 @@
 
         audio
           .play()
-          .then(() => setStatus("live"))
+          .then(() => {
+            setStatus("live");
+            setIsPlaying(true);
+          })
           .catch(() => setStatus("error"));
       }, [computePosition, tracks]);
 
-      const handleEnded = () => { tuneIn(); };
+      const togglePlay = () => {
+        const audio = audioRef.current;
+        if (!audio) return;
 
-      // Intégration MediaSession (Commandes écran de verrouillage/Mobile)
+        if (isPlaying) {
+          audio.pause();
+          setIsPlaying(false);
+        } else {
+          if (status !== "live") {
+            tuneIn();
+          } else {
+            audio.play();
+            setIsPlaying(true);
+          }
+        }
+      };
+
+      const handleNext = () => {
+        const nextIdx = (trackIndex + 1) % tracks.length;
+        setTrackIndex(nextIdx);
+        if (audioRef.current) {
+          audioRef.current.src = tracks[nextIdx].url;
+          audioRef.current.play();
+          setIsPlaying(true);
+        }
+      };
+
+      const handlePrev = () => {
+        const prevIdx = (trackIndex - 1 + tracks.length) % tracks.length;
+        setTrackIndex(prevIdx);
+        if (audioRef.current) {
+          audioRef.current.src = tracks[prevIdx].url;
+          audioRef.current.play();
+          setIsPlaying(true);
+        }
+      };
+
+      // Configuration de l'écran de verrouillage Android
       useEffect(() => {
         if ('mediaSession' in navigator && tracks.length > 0 && tracks[trackIndex]) {
+          const currentTrack = tracks[trackIndex];
+
           navigator.mediaSession.metadata = new MediaMetadata({
-            title: tracks[trackIndex].title,
-            artist: STATION_NAME,
-            album: "Direct Synchrone",
-            artwork: coverUrl ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }] : []
+            title: currentTrack.title,
+            artist: ARTIST_NAME,
+            album: STATION_NAME,
+            artwork: [
+              { src: currentCover, sizes: '512x512', type: 'image/jpeg' },
+              { src: currentCover, sizes: '1024x1024', type: 'image/png' }
+            ]
           });
 
-          navigator.mediaSession.setActionHandler('play', () => audioRef.current?.play());
-          navigator.mediaSession.setActionHandler('pause', () => audioRef.current?.pause());
+          navigator.mediaSession.setActionHandler('play', () => {
+            audioRef.current?.play();
+            setIsPlaying(true);
+          });
+          navigator.mediaSession.setActionHandler('pause', () => {
+            audioRef.current?.pause();
+            setIsPlaying(false);
+          });
+          navigator.mediaSession.setActionHandler('previoustrack', handlePrev);
+          navigator.mediaSession.setActionHandler('nexttrack', handleNext);
         }
-      }, [trackIndex, tracks, coverUrl]);
-
-      useEffect(() => {
-        const handleVisibilityChange = () => {
-          if (document.visibilityState === "visible" && status === "live") {
-            tuneIn();
-          }
-        };
-        document.addEventListener("visibilitychange", handleVisibilityChange);
-        return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-      }, [status, tuneIn]);
+      }, [trackIndex, tracks, currentCover]);
 
       useEffect(() => {
         const t = setInterval(() => {
-          const audio = audioRef.current;
-          if (audio && !audio.paused) {
-            setElapsedInTrack(audio.currentTime || 0);
-
-            const remaining = (audio.duration || 0) - audio.currentTime;
-            const now = Date.now();
-
-            if (
-              remaining > 0 &&
-              remaining <= 12 &&
-              now - lastAnnouncementRef.current >= ANNOUNCE_INTERVAL_MS &&
-              tracksRef.current.length > 0
-            ) {
-              lastAnnouncementRef.current = now;
-              const nextTrack = tracksRef.current[(trackIndexRef.current + 1) % tracksRef.current.length];
-              const upcoming = [1, 2].map(
-                (offset) => tracksRef.current[(trackIndexRef.current + offset) % tracksRef.current.length].title
-              );
-
-              audio.volume = 0.15;
-              announceUpcoming(upcoming, nextTrack?.isNew, () => {
-                if (audioRef.current) audioRef.current.volume = 1.0;
-              });
-            }
+          if (audioRef.current && !audioRef.current.paused) {
+            setElapsed(audioRef.current.currentTime || 0);
           }
-        }, 400);
+        }, 300);
         return () => clearInterval(t);
       }, []);
 
+      const currentTrack = tracks[trackIndex] || { title: "Chargement..." };
       const currentDuration = durations ? durations[trackIndex] : 0;
-      const progressPct = currentDuration
-        ? Math.min(100, (elapsedInTrack / currentDuration) * 100)
-        : 0;
+      const progressPct = currentDuration ? Math.min(100, (elapsed / currentDuration) * 100) : 0;
 
       return (
-        <div style={styles.wrap}>
-          {coverUrl && (
-            <div style={{
-              position: "fixed",
-              top: "-10%",
-              left: "-10%",
-              width: "120%",
-              height: "120%",
-              backgroundImage: `url(${coverUrl})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              filter: "blur(60px) brightness(0.35)",
-              transform: "scale(1.2)",
-              zIndex: 0,
-              transition: "background-image 1.2s ease-in-out"
-            }} />
-          )}
+        <div style={styles.appContainer}>
+          <div 
+            style={{
+              ...styles.bgBlur,
+              backgroundImage: `url(${currentCover})`
+            }} 
+          />
 
-          <style>{`
-            @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap');
-            @keyframes eqbar { 0%, 100% { transform: scaleY(0.2); } 50% { transform: scaleY(1); } }
-            @keyframes ledpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-            .rb-bar { animation: eqbar 0.8s ease-in-out infinite; transform-origin: bottom; }
-            .rb-led-live { animation: ledpulse 1.8s ease-in-out infinite; }
-          `}</style>
+          <div style={styles.playerCard}>
+            <div style={styles.topBar}>
+              <span style={styles.stationBadge}>● DIRECT SYNCHRONE</span>
+            </div>
 
-          <div style={styles.panel}>
-            <div style={styles.headerRow}>
-              <div
-                className={status === "live" ? "rb-led-live" : ""}
-                style={{
-                  ...styles.led,
-                  background: status === "live" ? "#ff5a3c" : "#3a2a22",
-                  boxShadow: status === "live" ? "0 0 10px #ff5a3c" : "none",
-                }}
+            <div style={styles.coverWrapper}>
+              <img 
+                src={currentCover} 
+                alt="Pochette" 
+                style={styles.coverImage}
+                onError={(e) => { e.target.src = DEFAULT_COVER; }}
               />
-              <span style={styles.headerLabel}>
-                {status === "live"
-                  ? "ON AIR"
-                  : status === "loading"
-                  ? "CHARGEMENT DU FLUX…"
-                  : status === "error"
-                  ? "ERREUR DE FLUX"
-                  : "STANDBY"}
-              </span>
             </div>
 
-            <h1 style={styles.station}>{STATION_NAME}</h1>
-            <div style={styles.subtext}>Direct Synchrone</div>
+            <div style={styles.trackInfo}>
+              <h2 style={styles.trackTitle}>{currentTrack.title}</h2>
+              <p style={styles.artistTitle}>{ARTIST_NAME}</p>
+            </div>
 
-            <div style={styles.coverBox}>
-              {coverUrl ? (
-                <img src={coverUrl} alt="Pochette d'album" style={styles.coverImg} />
-              ) : (
-                <div style={styles.fallbackCover}>
-                  <div style={styles.fallbackTitle}>RADIO B.A.T</div>
-                  <div style={styles.fallbackSubtitle}>DIRECT</div>
+            <div style={styles.controlsWidget}>
+              <div style={styles.outputRow}>
+                <div style={styles.outputDevice}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                  <span>Sortie média</span>
                 </div>
-              )}
-            </div>
-
-            <div style={styles.display}>
-              <div style={styles.trackLabel}>
-                {tracks.length > 0 ? tracks[trackIndex]?.title : "Détection des morceaux..."}
               </div>
-              <div style={styles.timeRow}>
-                <span>{formatTime(elapsedInTrack)}</span>
-                <span>{formatTime(currentDuration)}</span>
+
+              <div style={styles.progressContainer}>
+                <div style={styles.progressBarBg}>
+                  <div style={{ ...styles.progressBarFill, width: `${progressPct}%` }} />
+                  <div style={{ ...styles.progressKnob, left: `calc(${progressPct}% - 6px)` }} />
+                </div>
+                <div style={styles.timeRow}>
+                  <span>{formatTime(elapsed)}</span>
+                  <span>{formatTime(currentDuration)}</span>
+                </div>
               </div>
-              <div style={styles.progressTrack}>
-                <div style={{ ...styles.progressFill, width: `${progressPct}%` }} />
+
+              <div style={styles.buttonsRow}>
+                <button style={styles.iconBtn} onClick={handlePrev}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+                </button>
+
+                <button style={styles.playBtn} onClick={isPlaying ? togglePlay : tuneIn}>
+                  {isPlaying ? (
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                  ) : (
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '3px' }}><path d="M8 5v14l11-7z"/></svg>
+                  )}
+                </button>
+
+                <button style={styles.iconBtn} onClick={handleNext}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                </button>
               </div>
             </div>
-
-            <div style={styles.bars}>
-              {Array.from({ length: 14 }).map((_, i) => (
-                <div
-                  key={i}
-                  className={status === "live" ? "rb-bar" : ""}
-                  style={{
-                    ...styles.bar,
-                    animationDelay: `${(i % 5) * 0.12}s`,
-                    transform: status === "live" ? undefined : "scaleY(0.15)",
-                  }}
-                />
-              ))}
-            </div>
-
-            {status !== "live" && (
-              <button style={styles.tuneButton} onClick={tuneIn} disabled={!durations}>
-                {durations ? "Se brancher sur l'antenne" : "Chargement des fréquences…"}
-              </button>
-            )}
-
-            {status === "live" && <div style={styles.liveNote}>Flux en direct</div>}
-            {status === "error" && <div style={styles.liveNote}>Erreur au chargement des fichiers.</div>}
-
-            <audio ref={audioRef} onEnded={handleEnded} />
           </div>
+
+          <audio ref={audioRef} onEnded={handleNext} />
         </div>
       );
     }
 
     const styles = {
-      wrap: { position: "relative", minHeight: "100vh", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#050302", padding: "20px", boxSizing: "border-box" },
-      panel: { position: "relative", zIndex: 1, width: "100%", maxWidth: "360px", background: "rgba(20, 15, 25, 0.75)", backdropFilter: "blur(20px)", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "22px", padding: "22px 20px 24px", boxShadow: "0 25px 50px rgba(0,0,0,0.6)", fontFamily: "'Space Mono', monospace", color: "#f0dcb8" },
-      headerRow: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" },
-      led: { width: "9px", height: "9px", borderRadius: "50%", flexShrink: 0, transition: "all 0.3s ease" },
-      headerLabel: { fontSize: "11px", letterSpacing: "2px", color: "#c9a877" },
-      station: { fontFamily: "'Bebas Neue', sans-serif", fontSize: "40px", letterSpacing: "3px", color: "#ffffff", margin: "2px 0 0", lineHeight: 1 },
-      subtext: { fontSize: "11px", color: "#a48760", marginTop: "2px", marginBottom: "18px", letterSpacing: "1px" },
-      coverBox: { width: "100%", aspectRatio: "1 / 1", borderRadius: "14px", overflow: "hidden", marginBottom: "18px", background: "#0a0710", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid rgba(255, 255, 255, 0.1)", boxShadow: "0 12px 30px rgba(0,0,0,0.5)" },
-      coverImg: { width: "100%", height: "100%", objectFit: "cover" },
-      fallbackCover: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", background: "radial-gradient(circle, #1a102f 0%, #08040d 100%)" },
-      fallbackTitle: { fontFamily: "'Bebas Neue', sans-serif", fontSize: "32px", color: "#ffbb33", letterSpacing: "2px" },
-      fallbackSubtitle: { fontSize: "10px", color: "#8a6d47", letterSpacing: "2px" },
-      display: { background: "rgba(10, 8, 14, 0.6)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "12px", padding: "14px", marginBottom: "16px" },
-      trackLabel: { fontSize: "13px", color: "#ffffff", fontWeight: "bold", minHeight: "36px", lineHeight: 1.3, marginBottom: "8px" },
-      timeRow: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#a48760", marginBottom: "6px" },
-      progressTrack: { height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.1)", overflow: "hidden" },
-      progressFill: { height: "100%", background: "linear-gradient(90deg, #ffbb33, #ff5a3c)", transition: "width 0.4s linear" },
-      bars: { display: "flex", alignItems: "flex-end", gap: "4px", height: "32px", marginBottom: "18px", justifyContent: "center" },
-      bar: { width: "5px", height: "100%", borderRadius: "2px", background: "linear-gradient(180deg, #ffbb33, #ff5a3c)" },
-      tuneButton: { width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: "linear-gradient(160deg, #f2b544, #d9862a)", color: "#241608", fontFamily: "'Space Mono', monospace", fontWeight: "bold", fontSize: "13px", letterSpacing: "0.5px", cursor: "pointer" },
-      liveNote: { textAlign: "center", fontSize: "10.5px", color: "#a48760", letterSpacing: "0.5px" }
+      appContainer: {
+        position: 'relative',
+        minHeight: '100vh',
+        width: '100vw',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        boxSizing: 'border-box',
+        overflow: 'hidden'
+      },
+      bgBlur: {
+        position: 'absolute',
+        top: '-10%',
+        left: '-10%',
+        width: '120%',
+        height: '120%',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        filter: 'blur(50px) brightness(0.4)',
+        transform: 'scale(1.1)',
+        zIndex: 0,
+        transition: 'background-image 0.8s ease-in-out'
+      },
+      playerCard: {
+        position: 'relative',
+        zIndex: 1,
+        width: '100%',
+        maxWidth: '380px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center'
+      },
+      topBar: {
+        marginBottom: '16px'
+      },
+      stationBadge: {
+        fontSize: '11px',
+        fontWeight: '700',
+        letterSpacing: '1.5px',
+        color: '#55d6be',
+        background: 'rgba(85, 214, 190, 0.15)',
+        padding: '6px 14px',
+        borderRadius: '20px',
+        border: '1px solid rgba(85, 214, 190, 0.3)'
+      },
+      coverWrapper: {
+        width: '100%',
+        aspectRatio: '1 / 1',
+        borderRadius: '28px',
+        overflow: 'hidden',
+        boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+        marginBottom: '20px'
+      },
+      coverImage: {
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover'
+      },
+      trackInfo: {
+        textAlign: 'center',
+        marginBottom: '22px',
+        width: '100%'
+      },
+      trackTitle: {
+        fontSize: '22px',
+        fontWeight: '800',
+        margin: '0 0 6px 0',
+        color: '#ffffff',
+        letterSpacing: '-0.3px',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      },
+      artistTitle: {
+        fontSize: '14px',
+        fontWeight: '600',
+        margin: 0,
+        color: 'rgba(255, 255, 255, 0.65)'
+      },
+      controlsWidget: {
+        width: '100%',
+        background: 'rgba(30, 42, 50, 0.65)',
+        backdropFilter: 'blur(25px)',
+        WebkitBackdropFilter: 'blur(25px)',
+        borderRadius: '24px',
+        padding: '18px',
+        boxSizing: 'border-box',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
+      },
+      outputRow: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '14px'
+      },
+      outputDevice: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        fontSize: '12px',
+        color: 'rgba(255, 255, 255, 0.7)',
+        fontWeight: '600'
+      },
+      progressContainer: {
+        width: '100%',
+        marginBottom: '16px'
+      },
+      progressBarBg: {
+        position: 'relative',
+        width: '100%',
+        height: '4px',
+        background: 'rgba(255, 255, 255, 0.2)',
+        borderRadius: '2px',
+        marginBottom: '8px'
+      },
+      progressBarFill: {
+        height: '100%',
+        background: '#55d6be',
+        borderRadius: '2px',
+        transition: 'width 0.3s linear'
+      },
+      progressKnob: {
+        position: 'absolute',
+        top: '-4px',
+        width: '12px',
+        height: '12px',
+        borderRadius: '50%',
+        background: '#55d6be',
+        boxShadow: '0 0 8px #55d6be'
+      },
+      timeRow: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        fontSize: '11px',
+        color: 'rgba(255, 255, 255, 0.5)',
+        fontWeight: '600'
+      },
+      buttonsRow: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '28px'
+      },
+      iconBtn: {
+        background: 'none',
+        border: 'none',
+        color: '#ffffff',
+        cursor: 'pointer',
+        padding: '8px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: 0.85
+      },
+      playBtn: {
+        width: '52px',
+        height: '52px',
+        borderRadius: '50%',
+        background: '#ffffff',
+        color: '#0b0d12',
+        border: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        boxShadow: '0 4px 15px rgba(255,255,255,0.2)'
+      }
     };
 
     const root = ReactDOM.createRoot(document.getElementById("root"));
