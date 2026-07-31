@@ -7,6 +7,7 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body style="margin:0; background:#0b0d12; color:#ffffff; font-family:'Plus Jakarta Sans', sans-serif; overflow-x:hidden;">
@@ -21,8 +22,10 @@
 
     const DEFAULT_COVER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600' viewBox='0 0 600 600'><rect width='100%' height='100%' fill='%23121824'/><circle cx='300' cy='300' r='200' fill='none' stroke='%2355d6be' stroke-width='4' opacity='0.25'/><circle cx='300' cy='300' r='140' fill='none' stroke='%2355d6be' stroke-width='2' opacity='0.15'/><text x='50%' y='46%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='42' font-weight='800' letter-spacing='4'>RADIO B.A.T</text><text x='50%' y='56%' dominant-baseline='middle' text-anchor='middle' fill='%2355d6be' font-family='sans-serif' font-size='18' font-weight='700' letter-spacing='6'>DIRECT SYNCHRONE</text></svg>";
 
-    // Extracteur ID3 ultra-précis (découpe stricte des bordures d'image)
+    // Extraction dynamique par streaming de l'en-tête ID3
     async function extractCoverFromMP3(url) {
+      if (!window.jsmediatags) return null;
+
       try {
         const response = await fetch(url);
         if (!response.ok || !response.body) return null;
@@ -30,90 +33,88 @@
         const reader = response.body.getReader();
         const chunks = [];
         let totalBytes = 0;
-        let requiredBytes = 4 * 1024 * 1024; // 4 Mo max pour les grosses pochette HD
+        let requiredBytes = 10;
         let tagSizeCalculated = false;
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+
           chunks.push(value);
           totalBytes += value.length;
 
+          // Lecture des 10 premiers octets d'en-tête ID3v2
           if (!tagSizeCalculated && totalBytes >= 10) {
             const firstBytes = new Uint8Array(10);
-            let copied = 0;
+            let offset = 0;
             for (const chunk of chunks) {
-              const toCopy = Math.min(chunk.length, 10 - copied);
-              firstBytes.set(chunk.subarray(0, toCopy), copied);
-              copied += toCopy;
-              if (copied >= 10) break;
+              const count = Math.min(chunk.length, 10 - offset);
+              firstBytes.set(chunk.subarray(0, count), offset);
+              offset += count;
+              if (offset >= 10) break;
             }
 
-            // Vérification signature ID3v2
+            // Signature ID3 ('I', 'D', '3')
             if (firstBytes[0] === 0x49 && firstBytes[1] === 0x44 && firstBytes[2] === 0x33) {
+              // Calcul Synchsafe Integer de la taille du tag
               const tagSize = ((firstBytes[6] & 0x7f) << 21) |
                               ((firstBytes[7] & 0x7f) << 14) |
                               ((firstBytes[8] & 0x7f) << 7) |
                                (firstBytes[9] & 0x7f);
+
               requiredBytes = tagSize + 10;
+              tagSizeCalculated = true;
             } else {
+              // Pas de tag ID3v2 valide au début
               reader.cancel();
               return null;
             }
-            tagSizeCalculated = true;
           }
 
-          if (totalBytes >= requiredBytes) {
+          // Stop dès qu'on a récupéré l'intégralité du tag ID3
+          if (tagSizeCalculated && totalBytes >= requiredBytes) {
             reader.cancel();
             break;
           }
         }
 
-        const buffer = new Uint8Array(Math.min(totalBytes, requiredBytes));
-        let offset = 0;
+        // Assemblage des octets de métadonnées uniquement
+        const id3Buffer = new Uint8Array(Math.min(totalBytes, requiredBytes));
+        let pos = 0;
         for (const chunk of chunks) {
-          if (offset >= buffer.length) break;
-          const writeLen = Math.min(chunk.length, buffer.length - offset);
-          buffer.set(chunk.subarray(0, writeLen), offset);
-          offset += writeLen;
+          if (pos >= id3Buffer.length) break;
+          const writeLen = Math.min(chunk.length, id3Buffer.length - pos);
+          id3Buffer.set(chunk.subarray(0, writeLen), pos);
+          pos += writeLen;
         }
 
-        const tagEnd = buffer.length;
+        const blob = new Blob([id3Buffer]);
 
-        // 1. Recherche JPEG (Début: FF D8 FF -> Fin exacte: FF D9)
-        for (let i = 10; i < tagEnd - 4; i++) {
-          if (buffer[i] === 0xFF && buffer[i + 1] === 0xD8 && buffer[i + 2] === 0xFF) {
-            let imgEnd = -1;
-            for (let j = i + 100; j < tagEnd - 1; j++) {
-              if (buffer[j] === 0xFF && buffer[j + 1] === 0xD9) {
-                imgEnd = j + 2; // Inclut le marqueur de fin EOI
+        return new Promise((resolve) => {
+          window.jsmediatags.read(blob, {
+            onSuccess: function(tag) {
+              try {
+                const picture = tag.tags && tag.tags.picture;
+                if (picture && picture.data && picture.data.length > 0) {
+                  const byteArray = new Uint8Array(picture.data);
+                  const mimeType = picture.format || "image/jpeg";
+                  const imageBlob = new Blob([byteArray], { type: mimeType });
+                  resolve(URL.createObjectURL(imageBlob));
+                } else {
+                  resolve(null);
+                }
+              } catch (e) {
+                resolve(null);
               }
+            },
+            onError: function() {
+              resolve(null);
             }
-            if (imgEnd !== -1) {
-              const imgData = buffer.subarray(i, imgEnd);
-              return URL.createObjectURL(new Blob([imgData], { type: "image/jpeg" }));
-            }
-          }
-
-          // 2. Recherche PNG (Début: 89 50 4E 47 -> Fin exacte du bloc IEND)
-          if (buffer[i] === 0x89 && buffer[i + 1] === 0x50 && buffer[i + 2] === 0x4E && buffer[i + 3] === 0x47) {
-            let imgEnd = -1;
-            for (let j = i + 8; j < tagEnd - 8; j++) {
-              if (buffer[j] === 0x49 && buffer[j + 1] === 0x45 && buffer[j + 2] === 0x4E && buffer[j + 3] === 0x47) {
-                imgEnd = j + 8; // IEND + 4 octets de CRC
-                break;
-              }
-            }
-            if (imgEnd !== -1) {
-              const imgData = buffer.subarray(i, imgEnd);
-              return URL.createObjectURL(new Blob([imgData], { type: "image/png" }));
-            }
-          }
-        }
+          });
+        });
       } catch (e) {
-        console.error("Erreur extraction ID3 :", e);
+        return null;
       }
-      return null;
     }
 
     function seededShuffle(array, seed = 42) {
