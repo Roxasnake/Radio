@@ -3,11 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RADIO B.A.T — Suno Player</title>
+  <title>RADIO B.A.T — Direct</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Parser ID3 léger pour lire l'image interne des MP3 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
 </head>
@@ -19,39 +18,61 @@
 
     const ARTIST_NAME = "DJ B.A.T";
     const STATION_NAME = "RADIO B.A.T";
-    const DEFAULT_COVER = "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=1000&auto=format&fit=crop";
     const EPOCH = new Date("2026-01-01T00:00:00Z").getTime();
 
-    // Extraction de la pochette ID3 du MP3 vers une URL Blob compatible Android
-    function extractCoverFromMP3(url) {
-      return new Promise((resolve) => {
-        if (!window.jsmediatags) {
-          resolve(null);
-          return;
-        }
+    // Pochette par défaut aux couleurs de la station
+    const DEFAULT_COVER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600' viewBox='0 0 600 600'><rect width='100%' height='100%' fill='%23121824'/><circle cx='300' cy='300' r='200' fill='none' stroke='%2355d6be' stroke-width='4' opacity='0.25'/><circle cx='300' cy='300' r='140' fill='none' stroke='%2355d6be' stroke-width='2' opacity='0.15'/><text x='50%' y='46%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='42' font-weight='800' letter-spacing='4'>RADIO B.A.T</text><text x='50%' y='56%' dominant-baseline='middle' text-anchor='middle' fill='%2355d6be' font-family='sans-serif' font-size='18' font-weight='700' letter-spacing='6'>DIRECT SYNCHRONE</text></svg>";
 
-        window.jsmediatags.read(url, {
-          onSuccess: function(tag) {
-            try {
-              const picture = tag.tags && tag.tags.picture;
-              if (picture && picture.data && picture.data.length > 0) {
-                const byteArray = new Uint8Array(picture.data);
-                const mimeType = picture.format || "image/jpeg";
-                const blob = new Blob([byteArray], { type: mimeType });
-                const blobUrl = URL.createObjectURL(blob);
-                resolve(blobUrl);
-              } else {
+    // Extraction robuste des pochette ID3 via Blob
+    async function extractCoverFromMP3(url) {
+      if (!window.jsmediatags) return null;
+
+      try {
+        // Téléchargement des 512 premiers Ko pour contourner le blocage CORS Range
+        const response = await fetch(url, { headers: { 'Range': 'bytes=0-524288' } });
+        const blob = await response.blob();
+
+        return new Promise((resolve) => {
+          window.jsmediatags.read(blob, {
+            onSuccess: function(tag) {
+              try {
+                const picture = tag.tags && tag.tags.picture;
+                if (picture && picture.data && picture.data.length > 0) {
+                  const byteArray = new Uint8Array(picture.data);
+                  const mimeType = picture.format || "image/jpeg";
+                  const imageBlob = new Blob([byteArray], { type: mimeType });
+                  resolve(URL.createObjectURL(imageBlob));
+                } else {
+                  resolve(null);
+                }
+              } catch (e) {
                 resolve(null);
               }
-            } catch (e) {
+            },
+            onError: function() {
               resolve(null);
             }
-          },
-          onError: function() {
-            resolve(null);
-          }
+          });
         });
-      });
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Vérifie si une image avec le même nom existe sur le dépôt (ex: titre.jpg ou titre.png)
+    async function checkMatchingImage(mp3Url) {
+      const jpgUrl = mp3Url.replace(/\.mp3$/i, ".jpg");
+      const pngUrl = mp3Url.replace(/\.mp3$/i, ".png");
+
+      try {
+        const resJpg = await fetch(jpgUrl, { method: 'HEAD' });
+        if (resJpg.ok) return jpgUrl;
+
+        const resPng = await fetch(pngUrl, { method: 'HEAD' });
+        if (resPng.ok) return pngUrl;
+      } catch (e) {}
+
+      return null;
     }
 
     function seededShuffle(array, seed = 42) {
@@ -90,7 +111,6 @@
       const [currentCover, setCurrentCover] = useState(DEFAULT_COVER);
       const audioRef = useRef(null);
 
-      // Chargement des MP3
       useEffect(() => {
         let cancelled = false;
         setStatus("loading");
@@ -144,19 +164,6 @@
         return () => { cancelled = true; };
       }, []);
 
-      // Extraction automatique de la pochette du MP3 actif
-      useEffect(() => {
-        let active = true;
-        if (tracks.length > 0 && tracks[trackIndex]) {
-          extractCoverFromMP3(tracks[trackIndex].url).then((blobUrl) => {
-            if (active) {
-              setCurrentCover(blobUrl || DEFAULT_COVER);
-            }
-          });
-        }
-        return () => { active = false; };
-      }, [trackIndex, tracks]);
-
       const computePosition = useCallback(() => {
         if (!durations || durations.length === 0) return null;
         const total = durations.reduce((a, b) => a + b, 0);
@@ -195,6 +202,28 @@
           .catch(() => setStatus("error"));
       }, [computePosition, tracks]);
 
+      // Recherche prioritaire : 1) Image du même nom dans le repo, 2) Tag ID3 MP3, 3) SVG Radio B.A.T
+      useEffect(() => {
+        let active = true;
+        if (tracks.length > 0 && tracks[trackIndex]) {
+          const track = tracks[trackIndex];
+
+          (async () => {
+            const matchingImg = await checkMatchingImage(track.url);
+            if (active && matchingImg) {
+              setCurrentCover(matchingImg);
+              return;
+            }
+
+            const extractedImg = await extractCoverFromMP3(track.url);
+            if (active) {
+              setCurrentCover(extractedImg || DEFAULT_COVER);
+            }
+          })();
+        }
+        return () => { active = false; };
+      }, [trackIndex, tracks]);
+
       const togglePlay = () => {
         const audio = audioRef.current;
         if (!audio) return;
@@ -212,27 +241,11 @@
         }
       };
 
-      const handleNext = () => {
-        const nextIdx = (trackIndex + 1) % tracks.length;
-        setTrackIndex(nextIdx);
-        if (audioRef.current) {
-          audioRef.current.src = tracks[nextIdx].url;
-          audioRef.current.play();
-          setIsPlaying(true);
-        }
+      const handleEnded = () => {
+        tuneIn();
       };
 
-      const handlePrev = () => {
-        const prevIdx = (trackIndex - 1 + tracks.length) % tracks.length;
-        setTrackIndex(prevIdx);
-        if (audioRef.current) {
-          audioRef.current.src = tracks[prevIdx].url;
-          audioRef.current.play();
-          setIsPlaying(true);
-        }
-      };
-
-      // Configuration de l'écran de verrouillage Android
+      // Configuration de l'écran de verrouillage Android / iOS
       useEffect(() => {
         if ('mediaSession' in navigator && tracks.length > 0 && tracks[trackIndex]) {
           const currentTrack = tracks[trackIndex];
@@ -241,10 +254,7 @@
             title: currentTrack.title,
             artist: ARTIST_NAME,
             album: STATION_NAME,
-            artwork: [
-              { src: currentCover, sizes: '512x512', type: 'image/jpeg' },
-              { src: currentCover, sizes: '1024x1024', type: 'image/png' }
-            ]
+            artwork: [{ src: currentCover, sizes: '512x512', type: 'image/png' }]
           });
 
           navigator.mediaSession.setActionHandler('play', () => {
@@ -255,8 +265,10 @@
             audioRef.current?.pause();
             setIsPlaying(false);
           });
-          navigator.mediaSession.setActionHandler('previoustrack', handlePrev);
-          navigator.mediaSession.setActionHandler('nexttrack', handleNext);
+
+          // Verrouillage : pas de boutons piste suivante / précédente
+          navigator.mediaSession.setActionHandler('previoustrack', null);
+          navigator.mediaSession.setActionHandler('nexttrack', null);
         }
       }, [trackIndex, tracks, currentCover]);
 
@@ -269,7 +281,7 @@
         return () => clearInterval(t);
       }, []);
 
-      const currentTrack = tracks[trackIndex] || { title: "Chargement..." };
+      const currentTrack = tracks[trackIndex] || { title: "Connexion au flux..." };
       const currentDuration = durations ? durations[trackIndex] : 0;
       const progressPct = currentDuration ? Math.min(100, (elapsed / currentDuration) * 100) : 0;
 
@@ -321,26 +333,18 @@
               </div>
 
               <div style={styles.buttonsRow}>
-                <button style={styles.iconBtn} onClick={handlePrev}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-                </button>
-
                 <button style={styles.playBtn} onClick={isPlaying ? togglePlay : tuneIn}>
                   {isPlaying ? (
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
                   ) : (
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '3px' }}><path d="M8 5v14l11-7z"/></svg>
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '4px' }}><path d="M8 5v14l11-7z"/></svg>
                   )}
-                </button>
-
-                <button style={styles.iconBtn} onClick={handleNext}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
                 </button>
               </div>
             </div>
           </div>
 
-          <audio ref={audioRef} onEnded={handleNext} />
+          <audio ref={audioRef} onEnded={handleEnded} />
         </div>
       );
     }
@@ -365,7 +369,7 @@
         height: '120%',
         backgroundSize: 'cover',
         backgroundPosition: 'center',
-        filter: 'blur(50px) brightness(0.4)',
+        filter: 'blur(55px) brightness(0.35)',
         transform: 'scale(1.1)',
         zIndex: 0,
         transition: 'background-image 0.8s ease-in-out'
@@ -488,23 +492,11 @@
       buttonsRow: {
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        gap: '28px'
-      },
-      iconBtn: {
-        background: 'none',
-        border: 'none',
-        color: '#ffffff',
-        cursor: 'pointer',
-        padding: '8px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: 0.85
+        justifyContent: 'center'
       },
       playBtn: {
-        width: '52px',
-        height: '52px',
+        width: '56px',
+        height: '56px',
         borderRadius: '50%',
         background: '#ffffff',
         color: '#0b0d12',
@@ -513,7 +505,7 @@
         alignItems: 'center',
         justifyContent: 'center',
         cursor: 'pointer',
-        boxShadow: '0 4px 15px rgba(255,255,255,0.2)'
+        boxShadow: '0 4px 15px rgba(255,255,255,0.25)'
       }
     };
 
