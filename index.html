@@ -21,90 +21,79 @@
 
     const DEFAULT_COVER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600' viewBox='0 0 600 600'><rect width='100%' height='100%' fill='%23121824'/><circle cx='300' cy='300' r='200' fill='none' stroke='%2355d6be' stroke-width='4' opacity='0.25'/><circle cx='300' cy='300' r='140' fill='none' stroke='%2355d6be' stroke-width='2' opacity='0.15'/><text x='50%' y='46%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='42' font-weight='800' letter-spacing='4'>RADIO B.A.T</text><text x='50%' y='56%' dominant-baseline='middle' text-anchor='middle' fill='%2355d6be' font-family='sans-serif' font-size='18' font-weight='700' letter-spacing='6'>DIRECT SYNCHRONE</text></svg>";
 
-    // Parseur ID3 binaire natif ultra-fiable
+    // Extraction binaire ultra-rapide par flux pour mobile & desktop
     async function extractCoverFromMP3(url) {
       try {
         const response = await fetch(url);
-        if (!response.ok) return null;
+        if (!response.ok || !response.body) return null;
 
-        const buffer = await response.arrayBuffer();
-        const view = new DataView(buffer);
+        const reader = response.body.getReader();
+        const chunks = [];
+        let totalBytes = 0;
+        let requiredBytes = 2 * 1024 * 1024; // 2 Mo max par défaut
+        let tagSizeCalculated = false;
 
-        if (buffer.byteLength < 10) return null;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          totalBytes += value.length;
 
-        // Entête "ID3"
-        if (view.getUint8(0) !== 0x49 || view.getUint8(1) !== 0x44 || view.getUint8(2) !== 0x33) {
+          // Lecture de la taille exacte du bloc ID3 dès réception du premier paquet
+          if (!tagSizeCalculated && totalBytes >= 10) {
+            const firstChunk = chunks[0];
+            if (firstChunk[0] === 0x49 && firstChunk[1] === 0x44 && firstChunk[2] === 0x33) {
+              const tagSize = ((firstChunk[6] & 0x7f) << 21) |
+                              ((firstChunk[7] & 0x7f) << 14) |
+                              ((firstChunk[8] & 0x7f) << 7) |
+                               (firstChunk[9] & 0x7f);
+              requiredBytes = Math.min(tagSize + 10, 8 * 1024 * 1024);
+            }
+            tagSizeCalculated = true;
+          }
+
+          // Interruption du réseau dès que tout l'en-tête ID3 est en mémoire
+          if (totalBytes >= requiredBytes) {
+            reader.cancel();
+            break;
+          }
+        }
+
+        const buffer = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+          buffer.set(chunk, offset);
+          offset += chunk.length;
+        }
+
+        if (buffer[0] !== 0x49 || buffer[1] !== 0x44 || buffer[2] !== 0x33) {
           return null;
         }
 
-        const version = view.getUint8(3);
-        const tagSize = ((view.getUint8(6) & 0x7f) << 21) |
-                        ((view.getUint8(7) & 0x7f) << 14) |
-                        ((view.getUint8(8) & 0x7f) << 7) |
-                         (view.getUint8(9) & 0x7f);
+        let imgStart = -1;
+        let mimeType = "image/jpeg";
 
-        let offset = 10;
-        const end = Math.min(buffer.byteLength, 10 + tagSize);
-
-        while (offset < end - 10) {
-          let frameId = "";
-          let frameSize = 0;
-
-          if (version === 2) {
-            frameId = String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2));
-            frameSize = (view.getUint8(offset + 3) << 16) | (view.getUint8(offset + 4) << 8) | view.getUint8(offset + 5);
-            offset += 6;
-          } else {
-            frameId = String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
-            if (version === 4) {
-              frameSize = ((view.getUint8(offset + 4) & 0x7f) << 21) |
-                          ((view.getUint8(offset + 5) & 0x7f) << 14) |
-                          ((view.getUint8(offset + 6) & 0x7f) << 7) |
-                           (view.getUint8(offset + 7) & 0x7f);
-            } else {
-              frameSize = view.getUint32(offset + 4);
-            }
-            offset += 10;
-          }
-
-          if (!frameId || frameId.charCodeAt(0) === 0 || frameSize <= 0 || offset + frameSize > buffer.byteLength) {
+        // Détection des données image brutes (JPEG / PNG)
+        for (let i = 10; i < buffer.length - 4; i++) {
+          if (buffer[i] === 0xFF && buffer[i + 1] === 0xD8 && buffer[i + 2] === 0xFF) {
+            imgStart = i;
+            mimeType = "image/jpeg";
             break;
           }
-
-          if (frameId === "APIC" || frameId === "PIC") {
-            const frameStart = offset;
-            const frameEnd = frameStart + frameSize;
-
-            let imgStart = -1;
-            let mimeType = "image/jpeg";
-
-            // Balayage des octets magiques d'image dans le cadre APIC
-            for (let i = frameStart; i < frameEnd - 4; i++) {
-              // Signature JPEG : FF D8 FF
-              if (view.getUint8(i) === 0xFF && view.getUint8(i + 1) === 0xD8 && view.getUint8(i + 2) === 0xFF) {
-                imgStart = i;
-                mimeType = "image/jpeg";
-                break;
-              }
-              // Signature PNG : 89 50 4E 47
-              if (view.getUint8(i) === 0x89 && view.getUint8(i + 1) === 0x50 && view.getUint8(i + 2) === 0x4E && view.getUint8(i + 3) === 0x47) {
-                imgStart = i;
-                mimeType = "image/png";
-                break;
-              }
-            }
-
-            if (imgStart !== -1) {
-              const imgData = new Uint8Array(buffer, imgStart, frameEnd - imgStart);
-              const blob = new Blob([imgData], { type: mimeType });
-              return URL.createObjectURL(blob);
-            }
+          if (buffer[i] === 0x89 && buffer[i + 1] === 0x50 && buffer[i + 2] === 0x4E && buffer[i + 3] === 0x47) {
+            imgStart = i;
+            mimeType = "image/png";
+            break;
           }
+        }
 
-          offset += frameSize;
+        if (imgStart !== -1) {
+          const imgData = buffer.subarray(imgStart);
+          const blob = new Blob([imgData], { type: mimeType });
+          return URL.createObjectURL(blob);
         }
       } catch (e) {
-        console.error("Erreur de lecture ID3 :", e);
+        console.error("Erreur d'extraction :", e);
       }
       return null;
     }
