@@ -353,7 +353,6 @@
                 </div>
                 <div style={styles.timeRow}>
                   <span>{formatTime(elapsed)}</span>
-                  <span>/</span>
                   <span>{formatTime(currentDuration)}</span>
                 </div>
               </div>
@@ -361,9 +360,13 @@
               <div style={styles.buttonsRow}>
                 <button style={styles.playBtn} onClick={isPlaying ? togglePlay : tuneIn}>
                   {isPlaying ? (
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ display: 'block' }}>
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                    </svg>
                   ) : (
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ display: 'block', marginLeft: '3px' }}>
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
                   )}
                 </button>
               </div>
@@ -546,8 +549,7 @@
         justify: 'center',
         cursor: 'pointer',
         boxShadow: '0 4px 15px rgba(255,255,255,0.25)',
-        padding: 0,
-        margin: '0 auto'
+        padding: 0
       },
       volumeContainer: {
         display: 'flex',
