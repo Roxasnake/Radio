@@ -10,7 +10,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
-    /* Style personnalisé pour la barre de volume range */
     input[type=range].volume-slider {
       -webkit-appearance: none;
       width: 100%;
@@ -347,13 +346,6 @@
             </div>
 
             <div style={styles.controlsWidget}>
-              <div style={styles.outputRow}>
-                <div style={styles.outputDevice}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-                  <span>Sortie média</span>
-                </div>
-              </div>
-
               <div style={styles.progressContainer}>
                 <div style={styles.progressBarBg}>
                   <div style={{ ...styles.progressBarFill, width: `${progressPct}%` }} />
@@ -363,6 +355,16 @@
                   <span>{formatTime(elapsed)}</span>
                   <span>{formatTime(currentDuration)}</span>
                 </div>
+              </div>
+
+              <div style={styles.buttonsRow}>
+                <button style={styles.playBtn} onClick={isPlaying ? togglePlay : tuneIn}>
+                  {isPlaying ? (
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                  ) : (
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                  )}
+                </button>
               </div>
 
               <div style={styles.volumeContainer}>
@@ -384,16 +386,6 @@
                   onChange={handleVolumeChange} 
                   className="volume-slider"
                 />
-              </div>
-
-              <div style={styles.buttonsRow}>
-                <button style={styles.playBtn} onClick={isPlaying ? togglePlay : tuneIn}>
-                  {isPlaying ? (
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-                  ) : (
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '4px' }}><path d="M8 5v14l11-7z"/></svg>
-                  )}
-                </button>
               </div>
             </div>
           </div>
@@ -493,25 +485,14 @@
         padding: '18px',
         boxSizing: 'border-box',
         border: '1px solid rgba(255, 255, 255, 0.12)',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
-      },
-      outputRow: {
+        boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
         display: 'flex',
-        justify: 'space-between',
-        alignItems: 'center',
-        marginBottom: '14px'
-      },
-      outputDevice: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '6px',
-        fontSize: '12px',
-        color: 'rgba(255, 255, 255, 0.7)',
-        fontWeight: '600'
+        flexDirection: 'column',
+        alignItems: 'center'
       },
       progressContainer: {
         width: '100%',
-        marginBottom: '14px'
+        marginBottom: '16px'
       },
       progressBarBg: {
         position: 'relative',
@@ -543,26 +524,12 @@
         color: 'rgba(255, 255, 255, 0.5)',
         fontWeight: '600'
       },
-      volumeContainer: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        marginBottom: '16px',
-        padding: '0 4px'
-      },
-      volumeBtn: {
-        background: 'none',
-        border: 'none',
-        color: 'rgba(255, 255, 255, 0.7)',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        padding: 0
-      },
       buttonsRow: {
         display: 'flex',
         alignItems: 'center',
-        justify: 'center'
+        justify: 'center',
+        width: '100%',
+        marginBottom: '16px'
       },
       playBtn: {
         width: '56px',
@@ -575,7 +542,25 @@
         alignItems: 'center',
         justify: 'center',
         cursor: 'pointer',
-        boxShadow: '0 4px 15px rgba(255,255,255,0.25)'
+        boxShadow: '0 4px 15px rgba(255,255,255,0.25)',
+        padding: 0
+      },
+      volumeContainer: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        width: '100%',
+        padding: '0 4px'
+      },
+      volumeBtn: {
+        background: 'none',
+        border: 'none',
+        color: 'rgba(255, 255, 255, 0.7)',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justify: 'center',
+        padding: 0
       }
     };
 
