@@ -352,19 +352,19 @@
                   <div style={{ ...styles.progressKnob, left: `calc(${progressPct}% - 6px)` }} />
                 </div>
                 <div style={styles.timeRow}>
-                  <span>{formatTime(elapsed)}</span>
-                  <span>{formatTime(currentDuration)}</span>
+                  <div>{formatTime(elapsed)}</div>
+                  <div>{formatTime(currentDuration)}</div>
                 </div>
               </div>
 
               <div style={styles.buttonsRow}>
                 <button style={styles.playBtn} onClick={isPlaying ? togglePlay : tuneIn}>
                   {isPlaying ? (
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ display: 'block' }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
                     </svg>
                   ) : (
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ display: 'block', marginLeft: '3px' }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '2px' }}>
                       <path d="M8 5v14l11-7z"/>
                     </svg>
                   )}
