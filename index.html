@@ -10,6 +10,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
+    * {
+      box-sizing: border-box;
+    }
     input[type=range].volume-slider {
       -webkit-appearance: none;
       width: 100%;
@@ -352,19 +355,19 @@
                   <div style={{ ...styles.progressKnob, left: `calc(${progressPct}% - 6px)` }} />
                 </div>
                 <div style={styles.timeRow}>
-                  <div>{formatTime(elapsed)}</div>
-                  <div>{formatTime(currentDuration)}</div>
+                  <span>{formatTime(elapsed)}</span>
+                  <span>{formatTime(currentDuration)}</span>
                 </div>
               </div>
 
               <div style={styles.buttonsRow}>
                 <button style={styles.playBtn} onClick={isPlaying ? togglePlay : tuneIn}>
                   {isPlaying ? (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={styles.svgIcon}>
                       <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
                     </svg>
                   ) : (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '2px' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ ...styles.svgIcon, marginLeft: '2px' }}>
                       <path d="M8 5v14l11-7z"/>
                     </svg>
                   )}
@@ -408,7 +411,6 @@
         alignItems: 'center',
         justifyContent: 'center',
         padding: '20px',
-        boxSizing: 'border-box',
         overflow: 'hidden'
       },
       bgBlur: {
@@ -487,7 +489,6 @@
         WebkitBackdropFilter: 'blur(25px)',
         borderRadius: '24px',
         padding: '18px',
-        boxSizing: 'border-box',
         border: '1px solid rgba(255, 255, 255, 0.12)',
         boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
         display: 'flex',
@@ -549,15 +550,18 @@
         justify: 'center',
         cursor: 'pointer',
         boxShadow: '0 4px 15px rgba(255,255,255,0.25)',
-        padding: 0
+        padding: 0,
+        outline: 'none'
+      },
+      svgIcon: {
+        display: 'block'
       },
       volumeContainer: {
         display: 'flex',
         alignItems: 'center',
         gap: '10px',
         width: '100%',
-        padding: '0 4px',
-        boxSizing: 'border-box'
+        padding: '0 4px'
       },
       volumeBtn: {
         background: 'none',
