@@ -183,7 +183,6 @@
         const pos = computePosition();
         if (!pos || !audioRef.current || tracks.length === 0) return;
         
-        // Si on change de morceau, on applique le vote gagnant s'il existe, sinon l'index calculé
         let targetIdx = pos.idx;
         if (forcedNextIndex !== null) {
           targetIdx = forcedNextIndex;
@@ -248,17 +247,24 @@
 
             const currentDur = durations ? durations[trackIndex] : 0;
             if (currentDur > 0) {
+              // Simulation invisible en arrière-plan (uniquement pour calculer un choix si 0 vote)
               const seedBase = Math.floor(EPOCH / 1000) + trackIndex * 99;
-              let c1Votes = 3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5);
-              let c2Votes = 2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4);
-              let c3Votes = 1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3);
+              let simC1 = 3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5);
+              let simC2 = 2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4);
+              let simC3 = 1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3);
 
-              if (userVote === 0) c1Votes++;
-              if (userVote === 1) c2Votes++;
-              if (userVote === 2) c3Votes++;
+              // On combine avec le vrai vote de l'utilisateur s'il y en a un
+              let realC1 = (userVote === 0 ? 1 : 0);
+              let realC2 = (userVote === 1 ? 1 : 0);
+              let realC3 = (userVote === 2 ? 1 : 0);
 
-              let maxV = Math.max(c1Votes, c2Votes, c3Votes);
-              let winnerRelIdx = c1Votes === maxV ? 0 : (c2Votes === maxV ? 1 : 2);
+              // Si l'utilisateur a voté, son choix prend le dessus sur la simulation invisible
+              let totalC1 = realC1 > 0 ? simC1 + realC1 * 100 : simC1;
+              let totalC2 = realC2 > 0 ? simC2 + realC2 * 100 : simC2;
+              let totalC3 = realC3 > 0 ? simC3 + realC3 * 100 : simC3;
+
+              let maxV = Math.max(totalC1, totalC2, totalC3);
+              let winnerRelIdx = totalC1 === maxV ? 0 : (totalC2 === maxV ? 1 : 2);
               setForcedNextIndex((trackIndex + 1 + winnerRelIdx) % tracks.length);
             }
           }
@@ -274,10 +280,10 @@
       const candidate2 = tracks.length > 0 ? tracks[(trackIndex + 2) % tracks.length] : null;
       const candidate3 = tracks.length > 0 ? tracks[(trackIndex + 3) % tracks.length] : null;
 
-      const seedBase = Math.floor(EPOCH / 1000) + trackIndex * 99;
-      let c1Votes = (3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5)) + (userVote === 0 ? 1 : 0);
-      let c2Votes = (2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4)) + (userVote === 1 ? 1 : 0);
-      let c3Votes = (1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3)) + (userVote === 2 ? 1 : 0);
+      // AFFICHAGE UNIQUEMENT DES VRAIS VOTES (0 si aucun vote de l'utilisateur)
+      let displayC1 = (userVote === 0 ? 1 : 0);
+      let displayC2 = (userVote === 1 ? 1 : 0);
+      let displayC3 = (userVote === 2 ? 1 : 0);
 
       const isLocked = currentDuration > 0 && (currentDuration - elapsed <= 30);
 
@@ -309,9 +315,9 @@
                 {candidate1 && candidate2 && candidate3 && (
                   <div style={styles.candidatesList} className="vote-scroll">
                     {[
-                      { cand: candidate1, count: c1Votes, idx: 0 },
-                      { cand: candidate2, count: c2Votes, idx: 1 },
-                      { cand: candidate3, count: c3Votes, idx: 2 }
+                      { cand: candidate1, count: displayC1, idx: 0 },
+                      { cand: candidate2, count: displayC2, idx: 1 },
+                      { cand: candidate3, count: displayC3, idx: 2 }
                     ].map(({ cand, count, idx }) => (
                       <button 
                         key={idx} 
@@ -328,7 +334,7 @@
                         <span style={styles.candidateText}>
                           {idx + 1}. {cand.title}
                         </span>
-                        <span style={styles.voteCountBadge}>{count} votes</span>
+                        <span style={styles.voteCountBadge}>{count} vote{count > 1 ? 's' : ''}</span>
                       </button>
                     ))}
                   </div>
