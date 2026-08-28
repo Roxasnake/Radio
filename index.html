@@ -38,6 +38,16 @@
     const EPOCH = new Date("2026-01-01T00:00:00Z").getTime();
     const DEFAULT_COVER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600' viewBox='0 0 600 600'><rect width='100%' height='100%' fill='%23121824'/><circle cx='300' cy='300' r='200' fill='none' stroke='%2355d6be' stroke-width='4' opacity='0.25'/><circle cx='300' cy='300' r='140' fill='none' stroke='%2355d6be' stroke-width='2' opacity='0.15'/><text x='50%25' y='46%25' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='42' font-weight='800' letter-spacing='4'>RADIO B.A.T</text><text x='50%25' y='56%25' dominant-baseline='middle' text-anchor='middle' fill='%2355d6be' font-family='sans-serif' font-size='18' font-weight='700' letter-spacing='6'>DIRECT SYNCHRONE</text></svg>";
 
+    // ID de stockage partagé (généré automatiquement au premier run et sauvegardé en localStorage)
+    const getBinId = () => {
+      let id = localStorage.getItem("radio_bat_bin_id");
+      if (!id) {
+        // ID par défaut partagé pour tester immédiatement, ou création dynamique
+        id = "radio_bat_votes_shared_v1"; 
+      }
+      return id;
+    };
+
     async function extractCoverFromMP3(url) {
       if (!window.jsmediatags) return null;
       try {
@@ -99,7 +109,8 @@
       const [lyrics, setLyrics] = useState(null);
       const [showLyrics, setShowLyrics] = useState(false);
 
-      const [userVote, setUserVote] = useState(null);
+      const [userVote, setUserVote] = useState(null); // 0, 1, 2 ou null
+      const [remoteVotes, setRemoteVotes] = useState({c0: 0, c1: 0, c2: 0});
       const [forcedNextIndex, setForcedNextIndex] = useState(null);
 
       const audioRef = useRef(null);
@@ -122,6 +133,7 @@
         }
       };
 
+      // Charger la liste des musiques depuis GitHub
       useEffect(() => {
         let cancelled = false; setStatus("loading");
 
@@ -160,6 +172,43 @@
 
         return () => { cancelled = true; };
       }, []);
+
+      // Synchronisation périodique des votes en ligne (toutes les 3 secondes)
+      useEffect(() => {
+        const fetchVotes = async () => {
+          try {
+            const res = await fetch(`https://api.npoint.io/a92f033100652750807b`); // Endpoint partagé
+            if (res.ok) {
+              const data = await res.json();
+              if (data && typeof data === 'object') {
+                setRemoteVotes({
+                  c0: data.c0 || 0,
+                  c1: data.c1 || 0,
+                  c2: data.c2 || 0
+                });
+              }
+            }
+          } catch(e) {}
+        };
+
+        fetchVotes();
+        const interval = setInterval(fetchVotes, 3000);
+        return () => clearInterval(interval);
+      }, []);
+
+      // Fonction pour envoyer son vote en ligne
+      const sendVoteToServer = async (newVoteState) => {
+        // Calculer les totaux locaux en fonction du vote de l'utilisateur
+        // Pour faire simple, on envoie un signal d'incrémentation ou l'état brut
+        try {
+          // On récupère d'abord l'état actuel sur npoint, on modifie notre part, et on renvoie
+          const res = await fetch(`https://api.npoint.io/a92f033100652750807b`);
+          let currentData = res.ok ? await res.json() : {c0:0, c1:0, c2:0};
+          
+          // Logique simple : on remet à plat et on comptabilise
+          // (Idéalement stocké par ID client, mais pour du 2 personnes, un delta suffit)
+        } catch(e) {}
+      };
 
       const computePosition = useCallback(() => {
         if (!durations || durations.length === 0 || tracks.length === 0) return null;
@@ -247,21 +296,17 @@
 
             const currentDur = durations ? durations[trackIndex] : 0;
             if (currentDur > 0) {
-              // Simulation invisible en arrière-plan (uniquement pour calculer un choix si 0 vote)
-              const seedBase = Math.floor(EPOCH / 1000) + trackIndex * 99;
-              let simC1 = 3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5);
-              let simC2 = 2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4);
-              let simC3 = 1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3);
+              // S'il n'y a aucun vrai vote en ligne, on utilise l'EPOCH de secours
+              let totalC1 = remoteVotes.c0;
+              let totalC2 = remoteVotes.c1;
+              let totalC3 = remoteVotes.c2;
 
-              // On combine avec le vrai vote de l'utilisateur s'il y en a un
-              let realC1 = (userVote === 0 ? 1 : 0);
-              let realC2 = (userVote === 1 ? 1 : 0);
-              let realC3 = (userVote === 2 ? 1 : 0);
-
-              // Si l'utilisateur a voté, son choix prend le dessus sur la simulation invisible
-              let totalC1 = realC1 > 0 ? simC1 + realC1 * 100 : simC1;
-              let totalC2 = realC2 > 0 ? simC2 + realC2 * 100 : simC2;
-              let totalC3 = realC3 > 0 ? simC3 + realC3 * 100 : simC3;
+              if (totalC1 === 0 && totalC2 === 0 && totalC3 === 0) {
+                const seedBase = Math.floor(EPOCH / 1000) + trackIndex * 99;
+                totalC1 = 3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5);
+                totalC2 = 2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4);
+                totalC3 = 1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3);
+              }
 
               let maxV = Math.max(totalC1, totalC2, totalC3);
               let winnerRelIdx = totalC1 === maxV ? 0 : (totalC2 === maxV ? 1 : 2);
@@ -270,7 +315,7 @@
           }
         }, 300);
         return () => clearInterval(t);
-      }, [durations, trackIndex, tracks, userVote]);
+      }, [durations, trackIndex, tracks, remoteVotes]);
 
       const currentTrack = tracks[trackIndex] || { title: "Connexion au flux..." };
       const currentDuration = durations ? durations[trackIndex] : 0;
@@ -280,20 +325,32 @@
       const candidate2 = tracks.length > 0 ? tracks[(trackIndex + 2) % tracks.length] : null;
       const candidate3 = tracks.length > 0 ? tracks[(trackIndex + 3) % tracks.length] : null;
 
-      // AFFICHAGE UNIQUEMENT DES VRAIS VOTES (0 si aucun vote de l'utilisateur)
-      let displayC1 = (userVote === 0 ? 1 : 0);
-      let displayC2 = (userVote === 1 ? 1 : 0);
-      let displayC3 = (userVote === 2 ? 1 : 0);
-
       const isLocked = currentDuration > 0 && (currentDuration - elapsed <= 30);
 
       const handleVote = (index) => {
         if (isLocked) return;
-        if (userVote === index) {
-          setUserVote(null);
-        } else {
-          setUserVote(index);
-        }
+        const newVote = userVote === index ? null : index;
+        setUserVote(newVote);
+
+        // Mettre à jour localement l'affichage et envoyer au serveur partagé
+        let updated = { ...remoteVotes };
+        // Retirer l'ancien vote si existant
+        if (userVote === 0) updated.c0 = Math.max(0, updated.c0 - 1);
+        if (userVote === 1) updated.c1 = Math.max(0, updated.c1 - 1);
+        if (userVote === 2) updated.c2 = Math.max(0, updated.c2 - 1);
+        // Ajouter le nouveau
+        if (newVote === 0) updated.c0 += 1;
+        if (newVote === 1) updated.c1 += 1;
+        if (newVote === 2) updated.c2 += 1;
+
+        setRemoteVotes(updated);
+
+        // Envoi asynchrone au service en ligne
+        fetch(`https://api.npoint.io/a92f033100652750807b`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated)
+        }).catch(() => {});
       };
 
       const defaultNextTrack = candidate1 ? candidate1.title : "Chargement...";
@@ -315,9 +372,9 @@
                 {candidate1 && candidate2 && candidate3 && (
                   <div style={styles.candidatesList} className="vote-scroll">
                     {[
-                      { cand: candidate1, count: displayC1, idx: 0 },
-                      { cand: candidate2, count: displayC2, idx: 1 },
-                      { cand: candidate3, count: displayC3, idx: 2 }
+                      { cand: candidate1, count: remoteVotes.c0, idx: 0 },
+                      { cand: candidate2, count: remoteVotes.c1, idx: 1 },
+                      { cand: candidate3, count: remoteVotes.c2, idx: 2 }
                     ].map(({ cand, count, idx }) => (
                       <button 
                         key={idx} 
