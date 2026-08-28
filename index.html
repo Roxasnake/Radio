@@ -22,14 +22,9 @@
       -webkit-appearance: none; height: 12px; width: 12px;
       border-radius: 50%; background: #55d6be; box-shadow: 0 0 8px #55d6be; cursor: pointer;
     }
-    input[type=range].volume-slider::-moz-range-thumb {
-      height: 12px; width: 12px; border-radius: 50%;
-      background: #55d6be; border: none; box-shadow: 0 0 8px #55d6be; cursor: pointer;
-    }
-    /* Scrollbar pour les paroles */
-    .lyrics-scroll::-webkit-scrollbar { width: 4px; }
-    .lyrics-scroll::-webkit-scrollbar-track { background: transparent; }
-    .lyrics-scroll::-webkit-scrollbar-thumb { background: rgba(85, 214, 190, 0.5); border-radius: 4px; }
+    .lyrics-scroll::-webkit-scrollbar, .vote-scroll::-webkit-scrollbar { width: 4px; }
+    .lyrics-scroll::-webkit-scrollbar-track, .vote-scroll::-webkit-scrollbar-track { background: transparent; }
+    .lyrics-scroll::-webkit-scrollbar-thumb, .vote-scroll::-webkit-scrollbar-thumb { background: rgba(85, 214, 190, 0.5); border-radius: 4px; }
   </style>
 </head>
 <body style="margin:0; background:#0b0d12; color:#ffffff; font-family:'Plus Jakarta Sans', sans-serif; overflow-x:hidden;">
@@ -103,7 +98,11 @@
       
       const [lyrics, setLyrics] = useState(null);
       const [showLyrics, setShowLyrics] = useState(false);
-      
+
+      // États pour le système de vote des prochains morceaux
+      const [userVote, setUserVote] = useState(null);
+      const [votesCount, setVotesCount] = useState({});
+
       const audioRef = useRef(null);
       const coverCacheRef = useRef({});
 
@@ -182,6 +181,11 @@
       const tuneIn = useCallback(() => {
         const pos = computePosition();
         if (!pos || !audioRef.current || tracks.length === 0) return;
+        
+        // Réinitialiser le vote au changement de morceau
+        setUserVote(null);
+        setVotesCount({});
+
         setTrackIndex(pos.idx);
         const audio = audioRef.current;
         audio.src = tracks[pos.idx].url; audio.currentTime = pos.offset; audio.volume = volume;
@@ -240,6 +244,20 @@
       }, []);
 
       const currentTrack = tracks[trackIndex] || { title: "Connexion au flux..." };
+
+      // Récupérer les 3 prochains choix potentiels dans la playlist
+      const candidate1 = tracks.length > 0 ? tracks[(trackIndex + 1) % tracks.length] : null;
+      const candidate2 = tracks.length > 0 ? tracks[(trackIndex + 2) % tracks.length] : null;
+      const candidate3 = tracks.length > 0 ? tracks[(trackIndex + 3) % tracks.length] : null;
+
+      const handleVote = (index) => {
+        setUserVote(index);
+        setVotesCount(prev => ({
+          ...prev,
+          [index]: (prev[index] || 0) + 1
+        }));
+      };
+
       const currentDuration = durations ? durations[trackIndex] : 0;
       const progressPct = currentDuration ? Math.min(100, (elapsed / currentDuration) * 100) : 0;
 
@@ -271,7 +289,32 @@
               <div style={styles.trackInfo}>
                 <h2 style={styles.trackTitle}>{currentTrack.title}</h2>
                 <p style={styles.artistTitle}>{ARTIST_NAME}</p>
-                
+
+                {/* ZONE DE VOTE DES PROCHAINS TITRES */}
+                {candidate1 && candidate2 && candidate3 && (
+                  <div style={styles.voteBox}>
+                    <div style={styles.voteTitle}>Prochain titre (Voter) :</div>
+                    <div style={styles.candidatesList} className="vote-scroll">
+                      {[candidate1, candidate2, candidate3].map((cand, idx) => (
+                        <button 
+                          key={idx} 
+                          onClick={() => handleVote(idx)}
+                          style={{
+                            ...styles.candidateBtn,
+                            borderColor: userVote === idx ? '#55d6be' : 'rgba(255,255,255,0.1)',
+                            background: userVote === idx ? 'rgba(85, 214, 190, 0.2)' : 'rgba(255,255,255,0.05)'
+                          }}
+                        >
+                          <span style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
+                            {idx + 1}. {cand.title}
+                          </span>
+                          <span style={styles.voteCountBadge}>{votesCount[idx] || 0}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {lyrics && (
                   <button 
                     style={styles.lyricsBtn} 
@@ -391,7 +434,19 @@
         fontSize: '22px', fontWeight: '800', margin: '0 0 4px 0', color: '#ffffff',
         letterSpacing: '-0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
       },
-      artistTitle: { fontSize: '14px', fontWeight: '600', margin: '0 0 10px 0', color: 'rgba(255, 255, 255, 0.65)' },
+      artistTitle: { fontSize: '14px', fontWeight: '600', margin: '0 0 8px 0', color: 'rgba(255, 255, 255, 0.65)' },
+      voteBox: {
+        background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)',
+        borderRadius: '16px', padding: '10px', marginBottom: '10px', width: '100%', textAlign: 'left'
+      },
+      voteTitle: { fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.6)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' },
+      candidatesList: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '110px', overflowY: 'auto' },
+      candidateBtn: {
+        width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '6px 10px', borderRadius: '10px', border: '1px solid', color: '#fff',
+        fontSize: '12px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.2s'
+      },
+      voteCountBadge: { background: 'rgba(255,255,255,0.15)', padding: '2px 6px', borderRadius: '6px', fontSize: '11px' },
       lyricsBtn: {
         background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)',
         color: '#fff', borderRadius: '12px', padding: '6px 12px', fontSize: '12px',
