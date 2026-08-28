@@ -99,7 +99,6 @@
       const [lyrics, setLyrics] = useState(null);
       const [showLyrics, setShowLyrics] = useState(false);
 
-      // États pour le système de vote partagé et synchrone
       const [userVote, setUserVote] = useState(null);
       const [forcedNextIndex, setForcedNextIndex] = useState(null);
 
@@ -162,7 +161,6 @@
         return () => { cancelled = true; };
       }, []);
 
-      // Calcul synchrone de la position globale dans la playlist
       const computePosition = useCallback(() => {
         if (!durations || durations.length === 0 || tracks.length === 0) return null;
         const total = durations.reduce((a, b) => a + b, 0);
@@ -185,14 +183,20 @@
         const pos = computePosition();
         if (!pos || !audioRef.current || tracks.length === 0) return;
         
-        setTrackIndex(pos.idx);
-        setUserVote(null); // Reset du vote local pour le nouveau morceau
+        // Si on change de morceau, on applique le vote gagnant s'il existe, sinon l'index calculé
+        let targetIdx = pos.idx;
+        if (forcedNextIndex !== null) {
+          targetIdx = forcedNextIndex;
+        }
+
+        setTrackIndex(targetIdx);
+        setUserVote(null);
         setForcedNextIndex(null);
 
         const audio = audioRef.current;
-        audio.src = tracks[pos.idx].url; audio.currentTime = pos.offset; audio.volume = volume;
+        audio.src = tracks[targetIdx].url; audio.currentTime = pos.offset; audio.volume = volume;
         audio.play().then(() => { setStatus("live"); setIsPlaying(true); }).catch(() => setStatus("error"));
-      }, [computePosition, tracks, volume]);
+      }, [computePosition, tracks, volume, forcedNextIndex]);
 
       useEffect(() => {
         let active = true;
@@ -236,28 +240,23 @@
         else { status !== "live" ? tuneIn() : (audio.play(), setIsPlaying(true)); }
       };
 
-      // Boucle principale de mise à jour du temps et synchronisation des votes globaux
       useEffect(() => {
         const t = setInterval(() => {
           if (audioRef.current && !audioRef.current.paused) {
             const currentAudioTime = audioRef.current.currentTime || 0;
             setElapsed(currentAudioTime);
 
-            // Simulation globale partagée des votes basée sur l'heure universelle et l'index du morceau
             const currentDur = durations ? durations[trackIndex] : 0;
             if (currentDur > 0) {
-              // Calcul des votes fictifs partagés pour que tous les auditeurs voyants voient la même chose
               const seedBase = Math.floor(EPOCH / 1000) + trackIndex * 99;
               let c1Votes = 3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5);
               let c2Votes = 2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4);
               let c3Votes = 1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3);
 
-              // Si l'utilisateur a voté, on ajoute son vote au compteur global de sa sélection
               if (userVote === 0) c1Votes++;
               if (userVote === 1) c2Votes++;
               if (userVote === 2) c3Votes++;
 
-              // Détermination du gagnant en temps réel
               let maxV = Math.max(c1Votes, c2Votes, c3Votes);
               let winnerRelIdx = c1Votes === maxV ? 0 : (c2Votes === maxV ? 1 : 2);
               setForcedNextIndex((trackIndex + 1 + winnerRelIdx) % tracks.length);
@@ -271,31 +270,26 @@
       const currentDuration = durations ? durations[trackIndex] : 0;
       const progressPct = currentDuration ? Math.min(100, (elapsed / currentDuration) * 100) : 0;
 
-      // Détection des 3 prochains choix potentiels
       const candidate1 = tracks.length > 0 ? tracks[(trackIndex + 1) % tracks.length] : null;
       const candidate2 = tracks.length > 0 ? tracks[(trackIndex + 2) % tracks.length] : null;
       const candidate3 = tracks.length > 0 ? tracks[(trackIndex + 3) % tracks.length] : null;
 
-      // Calcul dynamique des scores pour l'affichage
       const seedBase = Math.floor(EPOCH / 1000) + trackIndex * 99;
       let c1Votes = (3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5)) + (userVote === 0 ? 1 : 0);
       let c2Votes = (2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4)) + (userVote === 1 ? 1 : 0);
       let c3Votes = (1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3)) + (userVote === 2 ? 1 : 0);
 
-      // Verrouillage des votes dans les 30 dernières secondes du morceau
       const isLocked = currentDuration > 0 && (currentDuration - elapsed <= 30);
 
       const handleVote = (index) => {
-        if (isLocked) return; // Bloqué dans les 30 dernières secondes
-        // Si l'utilisateur a déjà voté, on change son vote ou on l'annule, ou on autorise un vote unique strict :
+        if (isLocked) return;
         if (userVote === index) {
-          setUserVote(null); // Annule son vote s'il re-clique dessus
+          setUserVote(null);
         } else {
-          setUserVote(index); // Remplace par son nouveau choix unique
+          setUserVote(index);
         }
       };
 
-      // Nom du prochain titre par défaut (le suivant direct si pas de votes majoritaires ou si égalité)
       const defaultNextTrack = candidate1 ? candidate1.title : "Chargement...";
       const winningNextTrack = forcedNextIndex !== null && tracks[forcedNextIndex] ? tracks[forcedNextIndex].title : defaultNextTrack;
 
@@ -305,7 +299,6 @@
 
           <div style={styles.contentWrapper}>
             
-            {/* BLOC DE VOTE PLACÉ À GAUCHE */}
             <div style={styles.voteColumn}>
               <div style={styles.voteBox}>
                 <div style={styles.voteHeaderRow}>
@@ -348,7 +341,6 @@
               </div>
             </div>
 
-            {/* PLAYER PRINCIPAL AU CENTRE */}
             <div style={styles.playerCard}>
               <div style={styles.topBar}>
                 <span style={styles.stationBadge}>● DIRECT SYNCHRONE</span>
@@ -428,7 +420,6 @@
               </div>
             </div>
             
-            {/* WIDGET DE CHAT DISCORD À DROITE */}
             <div style={styles.chatContainer}>
               <iframe 
                 src="https://e.widgetbot.io/channels/1281338141671952505/1542861622614171809" 
@@ -535,7 +526,7 @@
       volumeBtn: { background: 'none', border: 'none', color: 'rgba(255, 255, 255, 0.7)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }
     };
 
-    const root = ReactDOM.createRoot(getElementById("root")); // Corrigé ci-dessous
+    const root = ReactDOM.createRoot(document.getElementById("root"));
     root.render(<Radio />);
   </script>
 </body>
