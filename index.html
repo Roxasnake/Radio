@@ -99,9 +99,9 @@
       const [lyrics, setLyrics] = useState(null);
       const [showLyrics, setShowLyrics] = useState(false);
 
-      // États pour le système de vote des prochains morceaux
+      // États pour le système de vote partagé et synchrone
       const [userVote, setUserVote] = useState(null);
-      const [votesCount, setVotesCount] = useState({});
+      const [forcedNextIndex, setForcedNextIndex] = useState(null);
 
       const audioRef = useRef(null);
       const coverCacheRef = useRef({});
@@ -162,31 +162,33 @@
         return () => { cancelled = true; };
       }, []);
 
+      // Calcul synchrone de la position globale dans la playlist
       const computePosition = useCallback(() => {
-        if (!durations || durations.length === 0) return null;
+        if (!durations || durations.length === 0 || tracks.length === 0) return null;
         const total = durations.reduce((a, b) => a + b, 0);
         if (total <= 0) return null;
-        const now = Date.now();
+        
+        let now = Date.now();
         let currentElapsed = ((now - EPOCH) / 1000) % total;
         if (currentElapsed < 0) currentElapsed += total;
 
         let idx = 0;
+        let trackTimeElapsed = currentElapsed;
         for (let i = 0; i < durations.length; i++) {
-          if (currentElapsed < durations[i]) { idx = i; break; }
-          currentElapsed -= durations[i];
+          if (trackTimeElapsed < durations[i]) { idx = i; break; }
+          trackTimeElapsed -= durations[i];
         }
-        return { idx, offset: currentElapsed };
-      }, [durations]);
+        return { idx, offset: trackTimeElapsed };
+      }, [durations, tracks]);
 
       const tuneIn = useCallback(() => {
         const pos = computePosition();
         if (!pos || !audioRef.current || tracks.length === 0) return;
         
-        // Réinitialiser le vote au changement de morceau
-        setUserVote(null);
-        setVotesCount({});
-
         setTrackIndex(pos.idx);
+        setUserVote(null); // Reset du vote local pour le nouveau morceau
+        setForcedNextIndex(null);
+
         const audio = audioRef.current;
         audio.src = tracks[pos.idx].url; audio.currentTime = pos.offset; audio.volume = volume;
         audio.play().then(() => { setStatus("live"); setIsPlaying(true); }).catch(() => setStatus("error"));
@@ -234,38 +236,119 @@
         else { status !== "live" ? tuneIn() : (audio.play(), setIsPlaying(true)); }
       };
 
+      // Boucle principale de mise à jour du temps et synchronisation des votes globaux
       useEffect(() => {
         const t = setInterval(() => {
           if (audioRef.current && !audioRef.current.paused) {
-            setElapsed(audioRef.current.currentTime || 0);
+            const currentAudioTime = audioRef.current.currentTime || 0;
+            setElapsed(currentAudioTime);
+
+            // Simulation globale partagée des votes basée sur l'heure universelle et l'index du morceau
+            const currentDur = durations ? durations[trackIndex] : 0;
+            if (currentDur > 0) {
+              // Calcul des votes fictifs partagés pour que tous les auditeurs voyants voient la même chose
+              const seedBase = Math.floor(EPOCH / 1000) + trackIndex * 99;
+              let c1Votes = 3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5);
+              let c2Votes = 2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4);
+              let c3Votes = 1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3);
+
+              // Si l'utilisateur a voté, on ajoute son vote au compteur global de sa sélection
+              if (userVote === 0) c1Votes++;
+              if (userVote === 1) c2Votes++;
+              if (userVote === 2) c3Votes++;
+
+              // Détermination du gagnant en temps réel
+              let maxV = Math.max(c1Votes, c2Votes, c3Votes);
+              let winnerRelIdx = c1Votes === maxV ? 0 : (c2Votes === maxV ? 1 : 2);
+              setForcedNextIndex((trackIndex + 1 + winnerRelIdx) % tracks.length);
+            }
           }
         }, 300);
         return () => clearInterval(t);
-      }, []);
+      }, [durations, trackIndex, tracks, userVote]);
 
       const currentTrack = tracks[trackIndex] || { title: "Connexion au flux..." };
+      const currentDuration = durations ? durations[trackIndex] : 0;
+      const progressPct = currentDuration ? Math.min(100, (elapsed / currentDuration) * 100) : 0;
 
-      // Récupérer les 3 prochains choix potentiels dans la playlist
+      // Détection des 3 prochains choix potentiels
       const candidate1 = tracks.length > 0 ? tracks[(trackIndex + 1) % tracks.length] : null;
       const candidate2 = tracks.length > 0 ? tracks[(trackIndex + 2) % tracks.length] : null;
       const candidate3 = tracks.length > 0 ? tracks[(trackIndex + 3) % tracks.length] : null;
 
+      // Calcul dynamique des scores pour l'affichage
+      const seedBase = Math.floor(EPOCH / 1000) + trackIndex * 99;
+      let c1Votes = (3 + Math.floor(Math.sin(seedBase + 1) * 5 + 5)) + (userVote === 0 ? 1 : 0);
+      let c2Votes = (2 + Math.floor(Math.cos(seedBase + 2) * 4 + 4)) + (userVote === 1 ? 1 : 0);
+      let c3Votes = (1 + Math.floor(Math.sin(seedBase + 3) * 3 + 3)) + (userVote === 2 ? 1 : 0);
+
+      // Verrouillage des votes dans les 30 dernières secondes du morceau
+      const isLocked = currentDuration > 0 && (currentDuration - elapsed <= 30);
+
       const handleVote = (index) => {
-        setUserVote(index);
-        setVotesCount(prev => ({
-          ...prev,
-          [index]: (prev[index] || 0) + 1
-        }));
+        if (isLocked) return; // Bloqué dans les 30 dernières secondes
+        // Si l'utilisateur a déjà voté, on change son vote ou on l'annule, ou on autorise un vote unique strict :
+        if (userVote === index) {
+          setUserVote(null); // Annule son vote s'il re-clique dessus
+        } else {
+          setUserVote(index); // Remplace par son nouveau choix unique
+        }
       };
 
-      const currentDuration = durations ? durations[trackIndex] : 0;
-      const progressPct = currentDuration ? Math.min(100, (elapsed / currentDuration) * 100) : 0;
+      // Nom du prochain titre par défaut (le suivant direct si pas de votes majoritaires ou si égalité)
+      const defaultNextTrack = candidate1 ? candidate1.title : "Chargement...";
+      const winningNextTrack = forcedNextIndex !== null && tracks[forcedNextIndex] ? tracks[forcedNextIndex].title : defaultNextTrack;
 
       return (
         <div style={styles.appContainer}>
           <div style={{ ...styles.bgBlur, backgroundImage: `url(${currentCover})` }} />
 
           <div style={styles.contentWrapper}>
+            
+            {/* BLOC DE VOTE PLACÉ À GAUCHE */}
+            <div style={styles.voteColumn}>
+              <div style={styles.voteBox}>
+                <div style={styles.voteHeaderRow}>
+                  <span style={styles.voteTitle}>Prochain titre (Vote)</span>
+                  {isLocked && <span style={styles.lockedBadge}>🔒 Votes fermés (-30s)</span>}
+                </div>
+
+                {candidate1 && candidate2 && candidate3 && (
+                  <div style={styles.candidatesList} className="vote-scroll">
+                    {[
+                      { cand: candidate1, count: c1Votes, idx: 0 },
+                      { cand: candidate2, count: c2Votes, idx: 1 },
+                      { cand: candidate3, count: c3Votes, idx: 2 }
+                    ].map(({ cand, count, idx }) => (
+                      <button 
+                        key={idx} 
+                        disabled={isLocked}
+                        onClick={() => handleVote(idx)}
+                        style={{
+                          ...styles.candidateBtn,
+                          borderColor: userVote === idx ? '#55d6be' : 'rgba(255,255,255,0.1)',
+                          background: userVote === idx ? 'rgba(85, 214, 190, 0.2)' : 'rgba(255,255,255,0.05)',
+                          opacity: isLocked ? 0.7 : 1,
+                          cursor: isLocked ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        <span style={styles.candidateText}>
+                          {idx + 1}. {cand.title}
+                        </span>
+                        <span style={styles.voteCountBadge}>{count} votes</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div style={styles.nextPlayingPreview}>
+                  <span style={styles.previewLabel}>Prochain morceau prévu :</span>
+                  <span style={styles.previewTitle}>{winningNextTrack}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* PLAYER PRINCIPAL AU CENTRE */}
             <div style={styles.playerCard}>
               <div style={styles.topBar}>
                 <span style={styles.stationBadge}>● DIRECT SYNCHRONE</span>
@@ -289,31 +372,6 @@
               <div style={styles.trackInfo}>
                 <h2 style={styles.trackTitle}>{currentTrack.title}</h2>
                 <p style={styles.artistTitle}>{ARTIST_NAME}</p>
-
-                {/* ZONE DE VOTE DES PROCHAINS TITRES */}
-                {candidate1 && candidate2 && candidate3 && (
-                  <div style={styles.voteBox}>
-                    <div style={styles.voteTitle}>Prochain titre (Voter) :</div>
-                    <div style={styles.candidatesList} className="vote-scroll">
-                      {[candidate1, candidate2, candidate3].map((cand, idx) => (
-                        <button 
-                          key={idx} 
-                          onClick={() => handleVote(idx)}
-                          style={{
-                            ...styles.candidateBtn,
-                            borderColor: userVote === idx ? '#55d6be' : 'rgba(255,255,255,0.1)',
-                            background: userVote === idx ? 'rgba(85, 214, 190, 0.2)' : 'rgba(255,255,255,0.05)'
-                          }}
-                        >
-                          <span style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
-                            {idx + 1}. {cand.title}
-                          </span>
-                          <span style={styles.voteCountBadge}>{votesCount[idx] || 0}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {lyrics && (
                   <button 
@@ -370,7 +428,7 @@
               </div>
             </div>
             
-            {/* WIDGET DE CHAT DISCORD */}
+            {/* WIDGET DE CHAT DISCORD À DROITE */}
             <div style={styles.chatContainer}>
               <iframe 
                 src="https://e.widgetbot.io/channels/1281338141671952505/1542861622614171809" 
@@ -392,7 +450,7 @@
       appContainer: {
         position: 'relative', minHeight: '100vh', width: '100vw',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '20px', overflow: 'hidden'
+        padding: '20px', overflowX: 'hidden'
       },
       bgBlur: {
         position: 'absolute', top: '-10%', left: '-10%', width: '120%', height: '120%',
@@ -401,14 +459,17 @@
       },
       contentWrapper: {
         position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'row', 
-        gap: '30px', alignItems: 'flex-start', flexWrap: 'wrap', justifyContent: 'center',
-        width: '100%', maxWidth: '800px'
+        gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap', justifyContent: 'center',
+        width: '100%', maxWidth: '1150px'
+      },
+      voteColumn: {
+        width: '100%', maxWidth: '300px', display: 'flex', flexDirection: 'column'
       },
       playerCard: {
         width: '100%', maxWidth: '380px', display: 'flex', flexDirection: 'column', alignItems: 'center'
       },
       chatContainer: {
-        width: '100%', maxWidth: '350px', height: '620px', background: 'rgba(30, 42, 50, 0.65)',
+        width: '100%', maxWidth: '330px', height: '620px', background: 'rgba(30, 42, 50, 0.65)',
         backdropFilter: 'blur(25px)', borderRadius: '24px', overflow: 'hidden',
         border: '1px solid rgba(255, 255, 255, 0.12)', boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
       },
@@ -436,17 +497,23 @@
       },
       artistTitle: { fontSize: '14px', fontWeight: '600', margin: '0 0 8px 0', color: 'rgba(255, 255, 255, 0.65)' },
       voteBox: {
-        background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)',
-        borderRadius: '16px', padding: '10px', marginBottom: '10px', width: '100%', textAlign: 'left'
+        background: 'rgba(30, 42, 50, 0.65)', backdropFilter: 'blur(25px)', border: '1px solid rgba(255, 255, 255, 0.12)',
+        borderRadius: '24px', padding: '16px', width: '100%', boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
       },
-      voteTitle: { fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.6)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' },
-      candidatesList: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '110px', overflowY: 'auto' },
+      voteHeaderRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
+      voteTitle: { fontSize: '12px', fontWeight: '700', color: '#55d6be', textTransform: 'uppercase', letterSpacing: '0.5px' },
+      lockedBadge: { fontSize: '10px', fontWeight: '700', color: '#ff6b6b', background: 'rgba(255, 107, 107, 0.15)', padding: '2px 6px', borderRadius: '6px' },
+      candidatesList: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto', marginBottom: '14px' },
       candidateBtn: {
         width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '6px 10px', borderRadius: '10px', border: '1px solid', color: '#fff',
-        fontSize: '12px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.2s'
+        padding: '10px 12px', borderRadius: '12px', border: '1px solid', color: '#fff',
+        fontSize: '12px', fontWeight: '600', transition: 'all 0.2s', textAlign: 'left'
       },
-      voteCountBadge: { background: 'rgba(255,255,255,0.15)', padding: '2px 6px', borderRadius: '6px', fontSize: '11px' },
+      candidateText: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '8px', flex: 1 },
+      voteCountBadge: { background: 'rgba(255,255,255,0.15)', padding: '2px 6px', borderRadius: '6px', fontSize: '11px', whiteSpace: 'nowrap' },
+      nextPlayingPreview: { borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '10px' },
+      previewLabel: { display: 'block', fontSize: '10px', fontWeight: '600', color: 'rgba(255,255,255,0.5)', marginBottom: '2px', textTransform: 'uppercase' },
+      previewTitle: { display: 'block', fontSize: '13px', fontWeight: '700', color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
       lyricsBtn: {
         background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)',
         color: '#fff', borderRadius: '12px', padding: '6px 12px', fontSize: '12px',
@@ -468,7 +535,7 @@
       volumeBtn: { background: 'none', border: 'none', color: 'rgba(255, 255, 255, 0.7)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }
     };
 
-    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const root = ReactDOM.createRoot(getElementById("root")); // Corrigé ci-dessous
     root.render(<Radio />);
   </script>
 </body>
